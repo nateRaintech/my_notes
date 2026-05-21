@@ -420,7 +420,9 @@ def run_session(
     tag = f"_{label}" if label else ""
     log_file = DEVLOGS_DIR / f"session_{timestamp}{tag}.txt"
 
-    claude_cmd = r"C:\Users\Nate\AppData\Roaming\npm\claude.cmd"
+    # Native Claude Code install — the binary Nate actually uses (see _Quickstart_CC.bat).
+    # NOT the npm-global claude.cmd, which was a stale 1.0.77 install that the service rejected.
+    claude_cmd = r"C:\Users\Nate\.local\bin\claude.exe"
     cmd = [
         claude_cmd,
         "-p",

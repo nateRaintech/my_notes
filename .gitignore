@@ -33,3 +33,7 @@ venv/
 Thumbs.db
 .vscode/
 .idea/
+
+# --- Personal launchers (machine-specific absolute paths; never committed) ---
+_Quickstart*.bat
+_AutoDev*.bat
