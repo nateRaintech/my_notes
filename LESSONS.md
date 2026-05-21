@@ -28,6 +28,7 @@ One dated bullet per lesson, newest at the top of its section. Keep each to a se
 
 ## Conventions
 
+- 2026-05-21 — **Real (CI-running) tests target the pure-Python `core/` layer with no `importorskip`** — they execute in CI even though PySide6 isn't installed, so `pytest` exits 0 on real assertions instead of relying on the exit-5 "no tests collected" crutch. Qt-dependent tests stay `importorskip`-guarded smoke tests. The first such test is `tests/test_text.py` against `core/text.derive_title`. (issue #3 / PR #4.)
 - 2026-05-21 — Entry point is `app.py` (a `main()` that builds the `QApplication`, shows `MainWindow`, runs the event loop); Qt-facing code lives in `ui/` (`ui/main_window.py` holds `MainWindow`). `core/` must never import Qt. (Established with M1 "app launches", issue #1 / PR #2.)
 - 2026-05-21 — Tests import `app`/`ui` via `pythonpath = ["."]` in `[tool.pytest.ini_options]` — `tests/` has no `__init__.py`, so without this `import ui` fails under pytest's prepend import mode.
 
