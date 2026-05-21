@@ -37,7 +37,7 @@ See `CLAUDE.md` for the full design and architecture (strict `core/` logic vs `u
 The project builds, runs, and has a green CI pipeline.
 
 - [x] App launches: a minimal PySide6 main window opens from a fresh checkout (`python app.py`)
-- [ ] Test framework wired up with at least one real test that passes under `pytest`
+- [x] Test framework wired up with at least one real test that passes under `pytest`
 - [ ] CI runs the real test suite + `ruff` on every PR to `main` (expand the scaffold gate)
 - [ ] `README.md` documents how to set up, run, and test the app
 
