@@ -1,0 +1,35 @@
+# --- Autodev runner (local-only, never committed) ---
+autodev_log.md
+board_snapshot.md
+devlogs/
+
+# --- Secrets / local config ---
+.env
+.env.*
+!.env.example
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+build/
+dist/
+
+# --- Virtual envs ---
+.venv/
+venv/
+
+# --- Local encrypted vaults / test data (NEVER commit user notes) ---
+*.vault
+*.db
+*.sqlite
+*.sqlite3
+
+# --- OS / IDE ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

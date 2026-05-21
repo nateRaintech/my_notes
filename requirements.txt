@@ -1,0 +1,17 @@
+# my_notes — Python dependencies
+# Runtime + dev/build tooling. Versions are intentionally left open for the
+# initial scaffold; the SQLCipher spike (ROADMAP M1) will pin them once Windows
+# wheel availability and PyInstaller bundling are confirmed.
+
+# --- Runtime (desktop app) ---
+PySide6            # Qt 6 GUI toolkit (LGPL) — replaces tkinter
+sqlcipher3-binary  # SQLCipher-backed SQLite driver — whole-DB encryption at rest
+argon2-cffi        # Argon2id key derivation for the master password
+
+# --- Dev / build / CI ---
+pytest             # test runner
+ruff               # linter
+pyinstaller        # .exe packaging
+
+# --- Autodev runner ---
+python-dotenv      # loads .env for the autodev.py runner (SMTP alert config)

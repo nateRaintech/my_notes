@@ -1,0 +1,19 @@
+[project]
+name = "my-notes"
+version = "0.0.0"
+description = "Local-first encrypted Markdown notes (PySide6 + SQLCipher), KeePass-style master password."
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+# Ruff's default rule set, made explicit. Intentionally conservative for the
+# scaffold so the CI gate is green from day one; tighten via ROADMAP (add E5/W/I
+# etc.) once there is real source to lint.
+select = ["E4", "E7", "E9", "F"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

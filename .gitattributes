@@ -1,0 +1,8 @@
+# Normalize line endings. Repo stores LF for all text files so Linux CI bash
+# scripts (e.g. .github/workflows/ci.yml) never see Windows CRLF.
+* text=auto eol=lf
+
+# Windows-only scripts keep CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
