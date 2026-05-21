@@ -17,3 +17,6 @@ select = ["E4", "E7", "E9", "F"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# Put the project root on sys.path so tests can `import app` / `import ui`
+# without an installed package or per-dir __init__.py shims.
+pythonpath = ["."]
