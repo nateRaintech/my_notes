@@ -28,10 +28,12 @@ One dated bullet per lesson, newest at the top of its section. Keep each to a se
 
 ## Conventions
 
-- _(none recorded yet)_
+- 2026-05-21 — Entry point is `app.py` (a `main()` that builds the `QApplication`, shows `MainWindow`, runs the event loop); Qt-facing code lives in `ui/` (`ui/main_window.py` holds `MainWindow`). `core/` must never import Qt. (Established with M1 "app launches", issue #1 / PR #2.)
+- 2026-05-21 — Tests import `app`/`ui` via `pythonpath = ["."]` in `[tool.pytest.ini_options]` — `tests/` has no `__init__.py`, so without this `import ui` fails under pytest's prepend import mode.
 
 ## Gotchas
 
+- 2026-05-21 — Qt/PySide6 tests must guard with `pytest.importorskip("PySide6")` and run headless via `os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")` set *before* any Qt import. CI does **not** install PySide6 yet, so without the guard the suite hard-fails on import; with it the module skips and pytest exits 5 ("no tests collected"), which `.github/workflows/ci.yml`'s exit-5 handler treats as pass — the gate stays green. The guarded imports need `# noqa: E402` (ruff `E4` selects E402). PySide6 6.11.1 installs cleanly on Windows. (issue #1 / PR #2.)
 - 2026-05-21 — The GitHub Project board is **user-owned** (`nateRaintech`), not org-owned. `autodev.py`'s board query uses `user(login: ...)`; the stock template uses `organization(...)`. If board fetches start returning 0 items / "fetch failed", check this first. (Project #6, IDs in `CLAUDE.md`.)
 - 2026-05-21 — `gh` is **not on PowerShell's PATH**; it lives at `C:\Users\Nate\bin\gh.exe`. The runner and docs call it by full path. From the Bash tool (git-bash) `gh` does resolve on PATH.
 - 2026-05-21 — Unverified risk for M2: SQLCipher (`sqlcipher3-binary`) on Windows + PyInstaller bundling is the project's biggest technical unknown. The first M2 capability is a spike to confirm it; if it's painful, the agreed fallback is field-level AES-GCM (no native dep). Don't build storage on SQLCipher until the spike passes.
