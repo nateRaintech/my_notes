@@ -29,13 +29,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libdbus-1-3
 
-      # Dev tooling + the GUI runtime (PySide6) so the launch smoke test runs in
-      # CI instead of skipping. sqlcipher3-binary / argon2-cffi are intentionally
-      # still NOT installed here — they get added once M2 tests need them and the
-      # SQLCipher spike confirms Linux wheels + PyInstaller bundling. See
-      # ROADMAP.md M2 and LESSONS.md.
+      # Dev tooling, the GUI runtime (PySide6), and argon2-cffi — the Argon2id
+      # KDF that tests/test_crypto.py imports, so those pure-Python core tests
+      # run in CI instead of failing to import. sqlcipher3 is still NOT installed
+      # here: no test imports it yet — it enters CI with core/vault.py (next M2
+      # capability). See ROADMAP.md M2 and LESSONS.md.
       - name: Install tooling and GUI runtime
-        run: pip install ruff pytest PySide6
+        run: pip install ruff pytest PySide6 argon2-cffi
 
       - name: Lint
         run: ruff check .
