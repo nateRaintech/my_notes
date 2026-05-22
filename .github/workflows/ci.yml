@@ -9,31 +9,39 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      # Headless Qt: select the offscreen platform plugin so PySide6 widgets can
+      # be constructed in CI without a display server. tests/test_app_launch.py
+      # also sets this defensively, but setting it job-wide keeps it explicit.
+      QT_QPA_PLATFORM: offscreen
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      # Scaffold gate: lint + tests only. Runtime deps (PySide6, sqlcipher3-binary,
-      # argon2-cffi) are intentionally NOT installed here yet — they get added once
-      # M1/M2 tests actually need them (and after the SQLCipher spike confirms Linux
-      # wheels are available). This keeps the merge gate green and fast on the initial
-      # near-empty repo. See ROADMAP.md M1: "CI runs the real test suite + ruff".
-      - name: Install tooling
-        run: pip install ruff pytest
+      # System libraries the Qt runtime needs to initialise the offscreen
+      # platform plugin on a headless runner. Without these, importing PySide6
+      # succeeds but constructing a QApplication aborts the process (uncatchable),
+      # which importorskip cannot guard against — so install them explicitly.
+      - name: Install Qt headless system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libdbus-1-3
+
+      # Dev tooling + the GUI runtime (PySide6) so the launch smoke test runs in
+      # CI instead of skipping. sqlcipher3-binary / argon2-cffi are intentionally
+      # still NOT installed here — they get added once M2 tests need them and the
+      # SQLCipher spike confirms Linux wheels + PyInstaller bundling. See
+      # ROADMAP.md M2 and LESSONS.md.
+      - name: Install tooling and GUI runtime
+        run: pip install ruff pytest PySide6
 
       - name: Lint
         run: ruff check .
 
+      # The real test suite is the merge gate now: core/ unit tests (pure Python)
+      # plus the PySide6 launch smoke test, run headless. No exit-5 "no tests
+      # collected" crutch — a genuine test failure (or zero tests) fails the build.
       - name: Test
-        run: |
-          set +e
-          pytest -q
-          code=$?
-          # pytest exit code 5 = "no tests collected" — expected on the scaffold; pass.
-          if [ "$code" -eq 5 ]; then
-            echo "No tests collected yet (scaffold). Treating as pass."
-            exit 0
-          fi
-          exit "$code"
+        run: pytest -q
