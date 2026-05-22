@@ -36,7 +36,7 @@ See `CLAUDE.md` for the full design and architecture (strict `core/` logic vs `u
 
 The security foundation. Everything persists through the encrypted vault; build and prove it before any UI stores data.
 
-- [ ] Spike: confirm `sqlcipher3-binary` opens an encrypted DB on Windows **and** bundles via PyInstaller; record findings + the fallback decision (field-level AES-GCM) in `LESSONS.md`
+- [x] Spike: confirm `sqlcipher3-binary` opens an encrypted DB on Windows **and** bundles via PyInstaller; record findings + the fallback decision (field-level AES-GCM) in `LESSONS.md` _(done: use `sqlcipher3>=0.6.2`, not `-binary`; SQLCipher viable on Windows + PyInstaller, AES-GCM fallback not needed — #11)_
 - [ ] `core/crypto.py`: derive a 256-bit key from a master password via **Argon2id** (tunable params), with unit tests for determinism and wrong-password behavior
 - [ ] `core/vault.py`: create / open / unlock a SQLCipher vault file with the derived key; a wrong password fails cleanly with no partial reads
 - [ ] Auto-lock: close the vault and wipe the key from memory on demand and after a configurable idle timeout
