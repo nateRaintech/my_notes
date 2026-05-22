@@ -12,7 +12,9 @@ the goal is to make core note-taking excellent.
 
 ### Product decisions (locked)
 
-- **Encryption at rest:** whole-database encryption via **SQLCipher** (`sqlcipher3-binary`).
+- **Encryption at rest:** whole-database encryption via **SQLCipher** (the `sqlcipher3`
+  package, `>=0.6.2` — **not** `sqlcipher3-binary`, which is Linux-wheel-only and won't
+  install on the Windows ship target; confirmed by the M2 spike #11).
   The master password is run through **Argon2id** to derive a 256-bit key handed to SQLCipher.
 - **No password recovery — by design.** Forgetting the master password means the notes are
   unrecoverable. This is the KeePass guarantee, not a gap.
@@ -49,7 +51,7 @@ and a `notes_fts` FTS5 table for full-text search.
 
 ## Stack & Commands
 
-- **GUI:** PySide6 (Qt 6, LGPL) · **Storage:** `sqlcipher3-binary` · **KDF:** `argon2-cffi`
+- **GUI:** PySide6 (Qt 6, LGPL) · **Storage:** `sqlcipher3` (>=0.6.2) · **KDF:** `argon2-cffi`
 - **Dev:** pytest · ruff · PyInstaller
 
 ```powershell
@@ -63,9 +65,11 @@ ruff check .                      # lint       (CI gate)
 - **Lint command:** `ruff check .`
 - Lint/test config is in `pyproject.toml`.
 
-> **Biggest technical risk (validate first):** SQLCipher on Windows + PyInstaller bundling.
-> The first M2 capability is a spike to confirm it. If it proves painful, the agreed fallback
-> is field-level AES-GCM encryption (no native dependency). See `LESSONS.md`.
+> **Biggest technical risk — RESOLVED (M2 spike #11, 2026-05-22):** SQLCipher on Windows +
+> PyInstaller bundling both work via the **`sqlcipher3>=0.6.2`** wheel (NOT `sqlcipher3-binary`,
+> which is Linux-only). A `--onefile` exe opens an encrypted DB with no extra PyInstaller flags.
+> The field-level AES-GCM fallback is **not** needed. See `spikes/sqlcipher_windows/README.md`
+> and `LESSONS.md`.
 
 ---
 
