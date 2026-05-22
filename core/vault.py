@@ -28,8 +28,9 @@ injectable monotonic ``clock`` let the UI drive auto-lock from a ``QTimer`` tick
 (:meth:`Vault.lock_if_idle`) while this layer stays Qt-free and testable.
 
 Scope: this module owns create / unlock / lock and the idle auto-lock policy. The
-database **schema** (notebooks, notes, tags, FTS5) is a separate M2 capability
-(see ``ROADMAP.md``).
+database **schema** (notebooks, notes, tags, FTS5) lives in :mod:`core.schema`;
+:meth:`Vault.create` initialises it on a fresh vault and :meth:`Vault.unlock`
+migrates an existing one forward, so the schema is always present once open.
 """
 
 from __future__ import annotations
@@ -42,6 +43,7 @@ from pathlib import Path
 
 from sqlcipher3 import dbapi2 as sqlcipher
 
+from core import schema
 from core.crypto import DEFAULT_PARAMS, KdfParams, derive_key, generate_salt
 
 # Bumped when the on-disk metadata layout changes; lets future versions migrate.
@@ -159,12 +161,14 @@ class Vault:
         conn = sqlcipher.connect(str(vault.path))
         try:
             conn.execute(_key_pragma(key))
-            # Writing the header page forces SQLCipher to encrypt and flush page
-            # 1, so even an otherwise-empty vault is a real encrypted DB on disk
-            # (and a wrong key later fails on the very first read). Doubles as a
-            # schema-version marker for the future migrations capability.
-            conn.execute(f"PRAGMA user_version = {META_FORMAT_VERSION}")
-            conn.commit()
+            # Foreign keys are off per-connection by default in SQLite; turn them
+            # on so the schema's ON DELETE CASCADE / SET NULL relationships hold.
+            conn.execute("PRAGMA foreign_keys = ON")
+            # Create the schema. This initialises the tables and, because it
+            # writes pages, forces SQLCipher to encrypt and flush page 1 — so even
+            # a brand-new vault is a real encrypted DB on disk, and a wrong key on
+            # a later open fails on the very first read. (migrate() commits.)
+            schema.migrate(conn)
         except Exception:
             conn.close()
             # Don't leave a half-written file behind on failure.
@@ -205,6 +209,17 @@ class Vault:
         except sqlcipher.DatabaseError as exc:
             conn.close()
             raise InvalidPassword("incorrect master password") from exc
+        except Exception:
+            conn.close()
+            raise
+
+        # The key is valid (page 1 decrypted). Enforce FK relationships and bring
+        # the schema forward — idempotent, a no-op when already at SCHEMA_VERSION.
+        # Kept out of the block above so a real migration error is never
+        # misreported as a wrong password.
+        try:
+            conn.execute("PRAGMA foreign_keys = ON")
+            schema.migrate(conn)
         except Exception:
             conn.close()
             raise
