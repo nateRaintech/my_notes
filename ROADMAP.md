@@ -32,16 +32,6 @@ See `CLAUDE.md` for the full design and architecture (strict `core/` logic vs `u
 
 ## Milestones
 
-### M2: Encrypted Vault Core — `status: planned`
-
-The security foundation. Everything persists through the encrypted vault; build and prove it before any UI stores data.
-
-- [x] Spike: confirm `sqlcipher3-binary` opens an encrypted DB on Windows **and** bundles via PyInstaller; record findings + the fallback decision (field-level AES-GCM) in `LESSONS.md` _(done: use `sqlcipher3>=0.6.2`, not `-binary`; SQLCipher viable on Windows + PyInstaller, AES-GCM fallback not needed — #11)_
-- [x] `core/crypto.py`: derive a 256-bit key from a master password via **Argon2id** (tunable params), with unit tests for determinism and wrong-password behavior _(done: low-level `hash_secret_raw(Type.ID)`, tunable `KdfParams`, 9 pure-Python tests — #13)_
-- [x] `core/vault.py`: create / open / unlock a SQLCipher vault file with the derived key; a wrong password fails cleanly with no partial reads _(done: `Vault.create/unlock/lock`, salt in plaintext `<vault>.meta` sidecar, raw-hex key + page-1 read validation → `InvalidPassword`, no-clobber/no-silent-create guards, 12 tests — #15)_
-- [x] Auto-lock: close the vault and wipe the key from memory on demand and after a configurable idle timeout _(done: in-place `bytearray` key wipe on `lock()` + injectable-clock idle policy (`idle_timeout`/`touch`/`is_idle_expired`/`lock_if_idle`), UI drives via QTimer, `core/` stays Qt-free, 10 tests — #17)_
-- [ ] Schema + migrations: `notebooks`, `notes`, `tags`, `note_tags`, and a `notes_fts` (FTS5) table are created on first open
-
 ### M3: Notes CRUD + Markdown Editor — `status: planned`
 
 The core note-taking experience, end to end for the happy path.
@@ -72,6 +62,16 @@ Usable at scale, and able to bring existing notes in.
 ---
 
 ## Completed milestones
+
+### M2: Encrypted Vault Core — `status: done` (completed 2026-05-22)
+
+The security foundation. Everything persists through the encrypted vault; build and prove it before any UI stores data.
+
+- [x] Spike: confirm `sqlcipher3-binary` opens an encrypted DB on Windows **and** bundles via PyInstaller; record findings + the fallback decision (field-level AES-GCM) in `LESSONS.md` _(done: use `sqlcipher3>=0.6.2`, not `-binary`; SQLCipher viable on Windows + PyInstaller, AES-GCM fallback not needed — #11)_
+- [x] `core/crypto.py`: derive a 256-bit key from a master password via **Argon2id** (tunable params), with unit tests for determinism and wrong-password behavior _(done: low-level `hash_secret_raw(Type.ID)`, tunable `KdfParams`, 9 pure-Python tests — #13)_
+- [x] `core/vault.py`: create / open / unlock a SQLCipher vault file with the derived key; a wrong password fails cleanly with no partial reads _(done: `Vault.create/unlock/lock`, salt in plaintext `<vault>.meta` sidecar, raw-hex key + page-1 read validation → `InvalidPassword`, no-clobber/no-silent-create guards, 12 tests — #15)_
+- [x] Auto-lock: close the vault and wipe the key from memory on demand and after a configurable idle timeout _(done: in-place `bytearray` key wipe on `lock()` + injectable-clock idle policy (`idle_timeout`/`touch`/`is_idle_expired`/`lock_if_idle`), UI drives via QTimer, `core/` stays Qt-free, 10 tests — #17)_
+- [x] Schema + migrations: `notebooks`, `notes`, `tags`, `note_tags`, and a `notes_fts` (FTS5) table are created on first open _(done: `core/schema.py` forward-only idempotent `migrate(conn)` keyed off `PRAGMA user_version` (SCHEMA_VERSION=1); external-content `notes_fts` FTS5 + ai/ad/au sync triggers; wired into `Vault.create`/`unlock` with `PRAGMA foreign_keys = ON`; 11 tests — #19)_
 
 ### M1: Project Foundation — `status: done` (completed 2026-05-22)
 
