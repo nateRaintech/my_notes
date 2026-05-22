@@ -32,15 +32,6 @@ See `CLAUDE.md` for the full design and architecture (strict `core/` logic vs `u
 
 ## Milestones
 
-### M1: Project Foundation — `status: in-progress`
-
-The project builds, runs, and has a green CI pipeline.
-
-- [x] App launches: a minimal PySide6 main window opens from a fresh checkout (`python app.py`)
-- [x] Test framework wired up with at least one real test that passes under `pytest`
-- [x] CI runs the real test suite + `ruff` on every PR to `main` (expand the scaffold gate)
-- [ ] `README.md` documents how to set up, run, and test the app
-
 ### M2: Encrypted Vault Core — `status: planned`
 
 The security foundation. Everything persists through the encrypted vault; build and prove it before any UI stores data.
@@ -82,4 +73,11 @@ Usable at scale, and able to bring existing notes in.
 
 ## Completed milestones
 
-_(none yet — autodev moves milestones here, with their completion date, as they finish)_
+### M1: Project Foundation — `status: done` (completed 2026-05-22)
+
+The project builds, runs, and has a green CI pipeline.
+
+- [x] App launches: a minimal PySide6 main window opens from a fresh checkout (`python app.py`)
+- [x] Test framework wired up with at least one real test that passes under `pytest`
+- [x] CI runs the real test suite + `ruff` on every PR to `main` (expand the scaffold gate)
+- [x] `README.md` documents how to set up, run, and test the app
