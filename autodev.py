@@ -4,7 +4,7 @@ Usage:
     python autodev.py --hours 2            # Run consecutive sessions for 2 hours
     python autodev.py --hours 0.5          # Run for 30 minutes
     python autodev.py                      # Run a single session (default)
-    python autodev.py --until-done         # Run until board is clear (10s between sessions)
+    python autodev.py --until-done         # Run until board + roadmap are exhausted (10s between sessions)
     python autodev.py --until-done --spacer 30  # Run until board is clear, 30 min between sessions
     python autodev.py --always             # Like --until-done, but never exit: when the board
                                            #   clears, poll hourly for new work and resume
@@ -598,25 +598,45 @@ def run_cycle(cycle_number: int, workers: int) -> None:
 
 
 def run_until_board_clear(start_count: int, pause_seconds: float, workers: int = 1) -> int:
-    """Run cycles back-to-back until the board has no active items.
+    """Run cycles until no actionable work remains — board *and* roadmap.
 
-    Shared by ``--until-done`` and ``--always``. Runs a cycle, then checks the
-    board; if active items remain, pauses ``pause_seconds`` and runs again.
-    Returns the running cycle count once :func:`board_has_active_items` reports
-    the board is clear. The caller decides what happens next — exit
-    (``--until-done``) or poll for new work (``--always``). ``workers`` is passed
-    through to :func:`run_cycle` for parallel mode.
+    Runs a cycle, then inspects the board:
+
+    * **Active items remain** → keep going.
+    * **Board clear, but it had active items at the *start* of this cycle** (i.e.
+      we just merged the last open PR and drained it) → loop once more, so the next
+      session can pull the next ``ROADMAP.md`` capability via Priority 5A. Without
+      this, the runner quit/stalled the instant the board went "Done-only" after a
+      merge instead of advancing the roadmap.
+    * **Board clear, and it was *already* clear when this cycle started** → the
+      session had its Priority 5A chance and still produced no board work, so there
+      is genuinely nothing left to decompose. Return.
+
+    Tying "keep going" to whether sessions actually *produce* board work (rather
+    than parsing ROADMAP checkbox state) makes this self-limiting: an exhausted
+    roadmap, an all-blocked board, and the 5B fallback idle-stop all converge on
+    "a from-clear session left the board clear" → return.
+
+    Shared by ``--until-done`` (which then exits) and ``--always`` (which then
+    idle-polls). ``workers`` is passed through to :func:`run_cycle`.
     """
     session_count = start_count
     while True:
+        cleared_at_start = not board_has_active_items()
         session_count += 1
         run_cycle(session_count, workers)
 
         print("\nChecking project board for remaining work...")
         if not board_has_active_items():
-            return session_count
-
-        print(f"Active items remain. Pausing {pause_seconds / 60:.1f} min before next session...")
+            if cleared_at_start:
+                # Began clear (had its Priority 5A chance) and ended clear → done.
+                return session_count
+            # Board only just drained this cycle — give the next session a chance to
+            # decompose the next ROADMAP capability before concluding we're done.
+            print(f"Board drained this cycle — running one more to advance the roadmap. "
+                  f"Pausing {pause_seconds / 60:.1f} min...")
+        else:
+            print(f"Active items remain. Pausing {pause_seconds / 60:.1f} min before next session...")
         time.sleep(pause_seconds)
 
 
@@ -650,7 +670,8 @@ def main() -> None:
     parser.add_argument(
         "--until-done",
         action="store_true",
-        help="Run sessions until no items remain in Backlog, Todo, or In Progress.",
+        help="Run sessions until the board is clear AND the ROADMAP has no more "
+             "capabilities to decompose (a from-clear session produces no new work), then exit.",
     )
     parser.add_argument(
         "--always",
