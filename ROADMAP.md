@@ -38,7 +38,7 @@ The security foundation. Everything persists through the encrypted vault; build 
 
 - [x] Spike: confirm `sqlcipher3-binary` opens an encrypted DB on Windows **and** bundles via PyInstaller; record findings + the fallback decision (field-level AES-GCM) in `LESSONS.md` _(done: use `sqlcipher3>=0.6.2`, not `-binary`; SQLCipher viable on Windows + PyInstaller, AES-GCM fallback not needed — #11)_
 - [x] `core/crypto.py`: derive a 256-bit key from a master password via **Argon2id** (tunable params), with unit tests for determinism and wrong-password behavior _(done: low-level `hash_secret_raw(Type.ID)`, tunable `KdfParams`, 9 pure-Python tests — #13)_
-- [ ] `core/vault.py`: create / open / unlock a SQLCipher vault file with the derived key; a wrong password fails cleanly with no partial reads
+- [x] `core/vault.py`: create / open / unlock a SQLCipher vault file with the derived key; a wrong password fails cleanly with no partial reads _(done: `Vault.create/unlock/lock`, salt in plaintext `<vault>.meta` sidecar, raw-hex key + page-1 read validation → `InvalidPassword`, no-clobber/no-silent-create guards, 12 tests — #15)_
 - [ ] Auto-lock: close the vault and wipe the key from memory on demand and after a configurable idle timeout
 - [ ] Schema + migrations: `notebooks`, `notes`, `tags`, `note_tags`, and a `notes_fts` (FTS5) table are created on first open
 
