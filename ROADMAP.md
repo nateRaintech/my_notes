@@ -36,7 +36,7 @@ See `CLAUDE.md` for the full design and architecture (strict `core/` logic vs `u
 
 The core note-taking experience, end to end for the happy path.
 
-- [ ] `core/repository.py`: create / read / update / delete notes and notebooks through the encrypted vault, with tests
+- [x] `core/repository.py`: create / read / update / delete notes and notebooks through the encrypted vault, with tests _(done: typed CRUD layer over a DB-API connection — frozen `Note`/`Notebook` value objects, `_UNSET` partial-update sentinel, FK cascade/SET NULL, writes-to-notes/notebooks-only with FTS kept in sync by schema triggers, 24 tests incl. a vault round-trip — #21 / PR #22)_
 - [ ] Main window: resizable 3-pane layout (notebooks/tags tree | note list | editor) via `QSplitter`
 - [ ] Markdown editor with live preview (editable source + `QTextDocument.setMarkdown()` preview pane)
 - [ ] Auto-save: edits persist (debounced) without an explicit Save button
