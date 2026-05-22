@@ -38,7 +38,7 @@ The project builds, runs, and has a green CI pipeline.
 
 - [x] App launches: a minimal PySide6 main window opens from a fresh checkout (`python app.py`)
 - [x] Test framework wired up with at least one real test that passes under `pytest`
-- [ ] CI runs the real test suite + `ruff` on every PR to `main` (expand the scaffold gate)
+- [x] CI runs the real test suite + `ruff` on every PR to `main` (expand the scaffold gate)
 - [ ] `README.md` documents how to set up, run, and test the app
 
 ### M2: Encrypted Vault Core — `status: planned`
