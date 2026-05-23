@@ -32,9 +32,9 @@ See `CLAUDE.md` for the full design and architecture (strict `core/` logic vs `u
 
 ## Milestones
 
-### M5: Polish, Packaging & Docs — `status: planned`
+### M5: Polish, Packaging & Docs — `status: in progress`
 
-- [ ] Dark theme via QSS, keyboard-first navigation, and a word count
+- [x] Dark theme via QSS, keyboard-first navigation, and a word count _(done in three slices: (1) #47 / PR #48 — word count: Qt-free `core.text.count_words` (a word = a whitespace-separated token with >=1 alphanumeric char, so lone Markdown punctuation isn't counted; Unicode-aware) feeding `MainWindow.word_count_label`, a permanent (right-pinned) status-bar `QLabel` driven by `_update_word_count` on `editor.source.textChanged` (singular/plural). (2) #49 / PR #50 — dark theme: Qt-free `core/theme.py` (`available_themes`/`load_stylesheet` — `""` for light/native + `resources/dark.qss` for dark, `DEFAULT_THEME="light"`) + `MainWindow.apply_theme`/`current_theme` and a checkable View → Dark Theme action wired to `triggered` (not `toggled`) to avoid `setChecked` re-entry; window-scoped for test isolation. (3) #51 / PR #52 — keyboard-first navigation: four window-level `QShortcut`s mirroring the existing Ctrl+P — Ctrl+1/2/3 → `focus_notebook_tree`/`focus_note_list`/`focus_editor` (=editable `editor.source`), Ctrl+F → `focus_search` (`setFocus`+`selectAll`), each routed through a public `focus_*` seam; navigation-only (a "new note" shortcut waits on the still-missing UI note authoring). 35 tests across the three slices (8 count_words + 6 word-count seam + 6 theme loader + 7 theme toggle + 8 keyboard-nav); `core/` stays Qt-free. — #47 / PR #48 + #49 / PR #50 + #51 / PR #52)_
 - [ ] PyInstaller spec that builds a working `my_notes.exe`, with the build documented
 - [ ] Settings: configurable idle-lock timeout, vault file location, and optional lock-on-minimize
 - [ ] User-facing documentation is complete and accurate (README + usage notes)
