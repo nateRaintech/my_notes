@@ -9,6 +9,8 @@ editorial rather than behavioral.
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from core import theme
@@ -43,3 +45,24 @@ def test_every_available_theme_loads():
     # Loading any advertised theme must succeed (no missing resource file).
     for name in theme.available_themes():
         assert isinstance(theme.load_stylesheet(name), str)
+
+
+# --- Frozen (PyInstaller) resource resolution -------------------------------
+# A --onefile build unpacks bundled data files to a temp dir exposed as
+# sys._MEIPASS at runtime; the loader must read resources/ from there, and fall
+# back to the project tree (beside core/) for ordinary source runs.
+
+
+def test_frozen_build_reads_qss_from_meipass(tmp_path, monkeypatch):
+    bundled = tmp_path / "resources"
+    bundled.mkdir()
+    (bundled / "dark.qss").write_text("/* bundled */ QWidget {}", encoding="utf-8")
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+
+    assert theme.load_stylesheet("dark") == "/* bundled */ QWidget {}"
+
+
+def test_non_frozen_reads_qss_from_project_resources(monkeypatch):
+    # No sys._MEIPASS => ordinary source run => the real resources/dark.qss.
+    monkeypatch.delattr(sys, "_MEIPASS", raising=False)
+    assert theme.load_stylesheet("dark").strip()

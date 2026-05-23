@@ -15,14 +15,28 @@ later M5 *Settings* capability, not this module's concern.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
-# resources/ sits beside core/ at the project root (core/ -> parent -> root). A
-# __file__-relative path works for source runs; bundling resources/dark.qss for
-# a PyInstaller build is handled by the M5 packaging capability.
-_RESOURCES_DIR = Path(__file__).resolve().parent.parent / "resources"
-
 DEFAULT_THEME = "light"
+
+
+def _resources_dir() -> Path:
+    """Locate the ``resources/`` directory for both source and frozen runs.
+
+    A PyInstaller ``--onefile`` build unpacks its bundled data files into a
+    temporary directory exposed at runtime as ``sys._MEIPASS`` (``my_notes.spec``
+    bundles ``resources/dark.qss`` under ``resources/`` there). In a normal
+    source checkout there is no ``_MEIPASS``; ``resources/`` then sits beside
+    ``core/`` at the project root (``core/`` -> parent -> root).
+
+    Resolved per call (not cached at import) so the right branch is taken
+    whether or not the interpreter is frozen.
+    """
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass is not None:
+        return Path(meipass) / "resources"
+    return Path(__file__).resolve().parent.parent / "resources"
 
 # Theme name -> its QSS file under resources/, or None for the native Qt look.
 _THEME_FILES: dict[str, str | None] = {
@@ -49,4 +63,4 @@ def load_stylesheet(name: str) -> str:
     filename = _THEME_FILES[name]
     if filename is None:
         return ""
-    return (_RESOURCES_DIR / filename).read_text(encoding="utf-8")
+    return (_resources_dir() / filename).read_text(encoding="utf-8")
