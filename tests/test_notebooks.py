@@ -9,7 +9,7 @@ ever looping or dropping a notebook.
 
 from __future__ import annotations
 
-from core.notebooks import NotebookNode, build_notebook_tree
+from core.notebooks import NotebookNode, build_notebook_tree, would_create_cycle
 from core.repository import Notebook
 
 
@@ -127,3 +127,54 @@ def test_every_notebook_appears_exactly_once():
     ]
     forest = build_notebook_tree(notebooks)
     assert _all_ids(forest) == {1, 2, 3, 4, 5}
+
+
+# -- would_create_cycle (re-parent guard) ---------------------------------
+
+# A three-level chain reused across the cycle tests: 1 → 2 → 3 (Root/Mid/Leaf).
+_CHAIN = [
+    _nb(1, "Root"),
+    _nb(2, "Mid", parent_id=1),
+    _nb(3, "Leaf", parent_id=2),
+]
+
+
+def test_reparenting_to_root_never_cycles():
+    # Moving any notebook back to the top level (None) is always safe.
+    assert would_create_cycle(_CHAIN, notebook_id=2, new_parent_id=None) is False
+
+
+def test_notebook_cannot_become_its_own_parent():
+    assert would_create_cycle(_CHAIN, notebook_id=2, new_parent_id=2) is True
+
+
+def test_moving_under_a_direct_child_is_a_cycle():
+    # 1 under 2 (its child) would make 1 a descendant of itself.
+    assert would_create_cycle(_CHAIN, notebook_id=1, new_parent_id=2) is True
+
+
+def test_moving_under_a_deep_descendant_is_a_cycle():
+    # 1 under 3 (its grandchild) — the upward walk from 3 reaches 1.
+    assert would_create_cycle(_CHAIN, notebook_id=1, new_parent_id=3) is True
+
+
+def test_moving_under_an_ancestor_or_sibling_is_allowed():
+    # 3 (the leaf) under 1 (its grandparent) is a legal re-parent, not a cycle.
+    assert would_create_cycle(_CHAIN, notebook_id=3, new_parent_id=1) is False
+    # An unrelated notebook is a fine target too.
+    notebooks = [*_CHAIN, _nb(4, "Other")]
+    assert would_create_cycle(notebooks, notebook_id=2, new_parent_id=4) is False
+
+
+def test_unknown_target_parent_is_allowed():
+    # A parent id matching no notebook becomes an effective root → no cycle.
+    assert would_create_cycle(_CHAIN, notebook_id=2, new_parent_id=999) is False
+
+
+def test_does_not_loop_on_preexisting_cycle():
+    # The stored data is already malformed (A↔B); the guard must still terminate.
+    bad = [_nb(1, "A", parent_id=2), _nb(2, "B", parent_id=1)]
+    # Target 1 is reachable from itself via the bad chain → reported as a cycle.
+    assert would_create_cycle(bad, notebook_id=1, new_parent_id=2) is True
+    # A target unrelated to notebook 3 still terminates and is allowed.
+    assert would_create_cycle(bad, notebook_id=3, new_parent_id=2) is False
