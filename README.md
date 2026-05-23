@@ -17,6 +17,8 @@ no code is carried over.
   password; later runs prompt to unlock it.
 - **Three-pane window** — a notebooks tree, a searchable note list, and a Markdown
   editor with **live preview**. Edits **auto-save** (debounced); there is no Save button.
+- **Create notes** from the UI — File → *New Note* (or `Ctrl+N`) adds a note to the
+  selected notebook and opens it in the editor, ready to type.
 - **Full-text search** across all notes (SQLite FTS5), plus a **Ctrl+P quick-switcher**
   that jumps to any note by fuzzy title match.
 - **Notebooks** for organization — create, rename, delete, nest, and move notes between
@@ -31,10 +33,9 @@ no code is carried over.
 AI features are intentionally out of scope for this version — the goal is to make core
 note-taking excellent.
 
-> **Current limitations (honest status).** There is **no "new note" command in the UI
-> yet** — a freshly created vault is empty, and the way to populate it today is the
-> legacy-`notes.db` **import wizard** (File → *Import legacy notes…*). The data model
-> also supports **tags**, but they are not yet exposed in the UI. See
+> **Current limitations (honest status).** The data model supports **tags**, but they
+> are not yet exposed in the UI, and there is no in-UI way to **delete** a note yet
+> (notebooks can be deleted; notes can be moved between them). See
 > [`ROADMAP.md`](ROADMAP.md) for what's planned next.
 
 ## Stack
@@ -97,13 +98,16 @@ encrypted vault. If one exists, it asks for the password to unlock it; a wrong p
 is reported inline and you can retry. There is **no password recovery** — keep the
 master password safe.
 
+**Create a note.** File → *New Note* (or `Ctrl+N`) creates a new note in the notebook
+you currently have selected (or at the root under *All Notes*), selects it, and puts
+the cursor in the editor so you can start typing right away.
+
 **Write notes.** The right pane is a Markdown editor: type Markdown source on the left
 half and see the rendered preview on the right. Changes are **auto-saved** a moment
 after you stop typing — there's no Save button. The status bar shows a live word count.
 
-> Because there is no "new note" UI yet, the way to get notes into a fresh vault today
-> is the **import wizard** (below). Once notes exist, selecting one in the note list
-> opens it in the editor.
+> You can also bring in existing notes in bulk with the legacy-`notes.db`
+> **import wizard** (below). Selecting any note in the list opens it in the editor.
 
 **Organize with notebooks.** Right-click in the left pane to create, rename, delete, or
 nest notebooks, and to *Move to…* a notebook under another. Right-click a note in the
@@ -137,6 +141,7 @@ vault and you're re-prompted when you restore it.
 
 | Shortcut | Action |
 |----------|--------|
+| `Ctrl+N` | New note — create a note in the selected notebook |
 | `Ctrl+P` | Quick-switcher — jump to a note by fuzzy title |
 | `Ctrl+F` | Focus the search box |
 | `Ctrl+1` | Focus the notebooks tree |
