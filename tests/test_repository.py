@@ -12,7 +12,7 @@ from sqlcipher3 import dbapi2 as sqlcipher
 
 from core import schema
 from core.crypto import KdfParams
-from core.repository import Note, NotFoundError, Notebook, Repository
+from core.repository import Note, NotFoundError, Notebook, Repository, Tag
 from core.vault import Vault
 
 # Minimal valid Argon2 params keep the vault-level tests' key derivation cheap.
@@ -35,6 +35,12 @@ def repo():
 def _fts_matches(connection, term):
     return connection.execute(
         "SELECT count(*) FROM notes_fts WHERE notes_fts MATCH ?", (term,)
+    ).fetchone()[0]
+
+
+def _note_tag_count(connection, note_id):
+    return connection.execute(
+        "SELECT count(*) FROM note_tags WHERE note_id = ?", (note_id,)
     ).fetchone()[0]
 
 
@@ -221,6 +227,159 @@ def test_delete_note_returns_bool(repo):
     assert repo.delete_note(note.id) is True
     assert repo.get_note(note.id) is None
     assert repo.delete_note(note.id) is False  # already gone
+
+
+# -- tags: create / read / delete --------------------------------------------
+
+
+def test_create_tag_returns_populated_object(repo):
+    tag = repo.create_tag("work")
+    assert isinstance(tag, Tag)
+    assert tag.id > 0
+    assert tag.name == "work"
+
+
+def test_create_tag_duplicate_name_raises(repo):
+    repo.create_tag("dup")
+    # tags.name has a UNIQUE constraint — a second insert of the same name fails.
+    with pytest.raises(sqlcipher.IntegrityError):
+        repo.create_tag("dup")
+
+
+def test_get_tag_roundtrip_and_missing(repo):
+    tag = repo.create_tag("idea")
+    assert repo.get_tag(tag.id) == tag
+    assert repo.get_tag(9999) is None
+
+
+def test_get_tag_by_name(repo):
+    tag = repo.create_tag("urgent")
+    assert repo.get_tag_by_name("urgent") == tag
+    assert repo.get_tag_by_name("nope") is None
+
+
+def test_list_tags_orders_by_name_case_insensitive(repo):
+    repo.create_tag("zebra")
+    repo.create_tag("Apple")
+    repo.create_tag("mango")
+    assert [t.name for t in repo.list_tags()] == ["Apple", "mango", "zebra"]
+
+
+def test_delete_tag_returns_bool(repo):
+    tag = repo.create_tag("temp")
+    assert repo.delete_tag(tag.id) is True
+    assert repo.get_tag(tag.id) is None
+    assert repo.delete_tag(tag.id) is False  # already gone
+
+
+def test_delete_tag_detaches_from_notes_but_keeps_them(repo):
+    note = repo.create_note(body="kept")
+    tag = repo.create_tag("ephemeral")
+    repo.add_tag_to_note(note.id, tag.id)
+    repo.delete_tag(tag.id)
+    # The join row cascades away; the note itself is untouched.
+    assert repo.get_note(note.id) is not None
+    assert repo.tags_for_note(note.id) == []
+    assert _note_tag_count(repo._conn, note.id) == 0
+
+
+# -- note <-> tag association -------------------------------------------------
+
+
+def test_add_tag_to_note_and_tags_for_note(repo):
+    note = repo.create_note(body="tagged")
+    a = repo.create_tag("alpha")
+    b = repo.create_tag("beta")
+    repo.add_tag_to_note(note.id, b.id)
+    repo.add_tag_to_note(note.id, a.id)
+    # tags_for_note is ordered by name, regardless of attach order.
+    assert repo.tags_for_note(note.id) == [a, b]
+
+
+def test_add_tag_to_note_is_idempotent(repo):
+    note = repo.create_note(body="x")
+    tag = repo.create_tag("once")
+    repo.add_tag_to_note(note.id, tag.id)
+    repo.add_tag_to_note(note.id, tag.id)  # no error, no duplicate
+    assert _note_tag_count(repo._conn, note.id) == 1
+    assert repo.tags_for_note(note.id) == [tag]
+
+
+def test_add_tag_to_note_unknown_note_or_tag_raises(repo):
+    note = repo.create_note(body="real")
+    tag = repo.create_tag("real")
+    with pytest.raises(sqlcipher.IntegrityError):
+        repo.add_tag_to_note(9999, tag.id)  # no such note
+    with pytest.raises(sqlcipher.IntegrityError):
+        repo.add_tag_to_note(note.id, 9999)  # no such tag
+
+
+def test_remove_tag_from_note_returns_bool(repo):
+    note = repo.create_note(body="y")
+    tag = repo.create_tag("removable")
+    repo.add_tag_to_note(note.id, tag.id)
+    assert repo.remove_tag_from_note(note.id, tag.id) is True
+    assert repo.tags_for_note(note.id) == []
+    assert repo.remove_tag_from_note(note.id, tag.id) is False  # already detached
+
+
+def test_tags_for_note_empty_when_untagged_or_missing(repo):
+    note = repo.create_note(body="bare")
+    assert repo.tags_for_note(note.id) == []
+    assert repo.tags_for_note(9999) == []  # missing note: just no join rows
+
+
+def test_delete_note_cascades_note_tags(repo):
+    note = repo.create_note(body="doomed")
+    tag = repo.create_tag("survivor")
+    repo.add_tag_to_note(note.id, tag.id)
+    repo.delete_note(note.id)
+    # The join row cascades with the note; the tag itself survives.
+    assert _note_tag_count(repo._conn, note.id) == 0
+    assert repo.get_tag(tag.id) == tag
+
+
+# -- notes: filter by tag -----------------------------------------------------
+
+
+def test_list_notes_filters_by_tag(repo):
+    tag = repo.create_tag("topic")
+    tagged = repo.create_note(body="in")
+    repo.create_note(body="out")  # untagged, must be excluded
+    repo.add_tag_to_note(tagged.id, tag.id)
+    assert [n.id for n in repo.list_notes(tag_id=tag.id)] == [tagged.id]
+
+
+def test_list_notes_by_tag_newest_first(repo):
+    tag = repo.create_tag("multi")
+    first = repo.create_note(body="first")
+    second = repo.create_note(body="second")
+    repo.add_tag_to_note(first.id, tag.id)
+    repo.add_tag_to_note(second.id, tag.id)
+    # Same ordering contract as the unfiltered list: newest updated, id DESC tie.
+    assert [n.id for n in repo.list_notes(tag_id=tag.id)] == [second.id, first.id]
+
+
+def test_list_notes_tag_and_notebook_filters_combine(repo):
+    nb = repo.create_notebook("Project")
+    tag = repo.create_tag("flag")
+    in_nb = repo.create_note(notebook_id=nb.id, body="in notebook")
+    at_root = repo.create_note(body="at root")
+    repo.add_tag_to_note(in_nb.id, tag.id)
+    repo.add_tag_to_note(at_root.id, tag.id)
+    # Both carry the tag, but only one is in the notebook — the filters AND.
+    assert [n.id for n in repo.list_notes(notebook_id=nb.id, tag_id=tag.id)] == [
+        in_nb.id
+    ]
+
+
+def test_list_notes_unfiltered_unaffected_by_tags(repo):
+    tag = repo.create_tag("noise")
+    a = repo.create_note(body="a")
+    b = repo.create_note(body="b")
+    repo.add_tag_to_note(a.id, tag.id)
+    # A bare list_notes() still returns every note once, regardless of tags.
+    assert [n.id for n in repo.list_notes()] == [b.id, a.id]
 
 
 # -- vault integration: persists encrypted across a lock/unlock cycle --------

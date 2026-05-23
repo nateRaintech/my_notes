@@ -2,8 +2,8 @@
 
 This is the typed Python API the UI calls instead of writing SQL: the editor,
 note list, and notebook tree all go through :class:`Repository`. It turns the raw
-``notes`` / ``notebooks`` tables created by :mod:`core.schema` into immutable
-:class:`Note` / :class:`Notebook` value objects.
+``notes`` / ``notebooks`` / ``tags`` tables created by :mod:`core.schema` into
+immutable :class:`Note` / :class:`Notebook` / :class:`Tag` value objects.
 
 Pure Python, no Qt: ``core/`` is the unit-testable layer (CLAUDE.md). Like
 :func:`core.schema.migrate`, :class:`Repository` takes any DB-API connection
@@ -25,8 +25,9 @@ Writes touch ``notes`` / ``notebooks`` only — the schema's ``notes_ai`` /
 sync automatically, so this layer never writes to it directly. (Search *queries*
 over that index are M4; this layer just must not break the triggers.)
 
-Scope: CRUD for notes and notebooks. Tag assignment/filtering, full-text search,
-and Markdown title derivation (:func:`core.text.derive_title`) are deliberately
+Scope: CRUD for notes, notebooks, and tags — including assigning/removing tags on
+a note and filtering the note list by tag. Full-text search *queries* (M4) and
+Markdown title derivation (:func:`core.text.derive_title`) are deliberately
 elsewhere — the repository stores whatever ``title`` / ``body`` it is given.
 """
 
@@ -87,6 +88,18 @@ class Note:
     updated_at: str
 
 
+@dataclass(frozen=True)
+class Tag:
+    """An immutable snapshot of a row in ``tags``.
+
+    A tag is just a unique label; unlike notes and notebooks it carries no
+    timestamps. Tags attach to notes through the ``note_tags`` join table.
+    """
+
+    id: int
+    name: str
+
+
 class RepositoryError(Exception):
     """Base class for repository errors."""
 
@@ -99,10 +112,17 @@ class NotFoundError(RepositoryError):
 # exact order of the dataclass fields so a row maps with ``Notebook(*row)``.
 _NOTEBOOK_COLUMNS = "id, name, parent_id, created_at, updated_at"
 _NOTE_COLUMNS = "id, notebook_id, title, body, created_at, updated_at"
+_TAG_COLUMNS = "id, name"
+
+# The same note columns, table-qualified — used by list_notes, which may JOIN
+# note_tags for tag filtering and so must disambiguate (and order by) notes.* .
+_NOTE_COLUMNS_QUALIFIED = ", ".join(
+    f"notes.{col.strip()}" for col in _NOTE_COLUMNS.split(",")
+)
 
 
 class Repository:
-    """CRUD over the vault's ``notes`` and ``notebooks`` tables.
+    """CRUD over the vault's ``notes``, ``notebooks``, and ``tags`` tables.
 
     Construct with an open, keyed, migrated connection (``Vault.connection`` in
     the app; an in-memory ``sqlcipher3`` connection in tests). Every write commits
@@ -218,27 +238,44 @@ class Repository:
         ).fetchone()
         return Note(*row) if row is not None else None
 
-    def list_notes(self, *, notebook_id: int | None = _UNSET) -> list[Note]:
+    def list_notes(
+        self,
+        *,
+        notebook_id: int | None = _UNSET,
+        tag_id: int = _UNSET,
+    ) -> list[Note]:
         """Return notes, most-recently-updated first (ties broken by newest id).
 
-        With no argument, returns every note. Pass ``notebook_id`` to filter:
-        an int restricts to that notebook, ``None`` returns root notes (those with
-        no notebook).
+        With no arguments, returns every note. The filters narrow the result and
+        combine (AND-ed together):
+
+        * ``notebook_id`` — an int restricts to that notebook; ``None`` returns
+          root notes (those with no notebook).
+        * ``tag_id`` — restricts to notes carrying that tag (joins ``note_tags``).
+          Each note appears at most once, since a note has a tag only once.
         """
-        order = "ORDER BY updated_at DESC, id DESC"
-        if notebook_id is _UNSET:
-            rows = self._conn.execute(
-                f"SELECT {_NOTE_COLUMNS} FROM notes {order}"
-            ).fetchall()
-        elif notebook_id is None:
-            rows = self._conn.execute(
-                f"SELECT {_NOTE_COLUMNS} FROM notes WHERE notebook_id IS NULL {order}"
-            ).fetchall()
-        else:
-            rows = self._conn.execute(
-                f"SELECT {_NOTE_COLUMNS} FROM notes WHERE notebook_id = ? {order}",
-                (notebook_id,),
-            ).fetchall()
+        join = ""
+        conditions: list[str] = []
+        params: list[Any] = []
+
+        if notebook_id is not _UNSET:
+            if notebook_id is None:
+                conditions.append("notes.notebook_id IS NULL")
+            else:
+                conditions.append("notes.notebook_id = ?")
+                params.append(notebook_id)
+
+        if tag_id is not _UNSET:
+            join = " JOIN note_tags ON note_tags.note_id = notes.id"
+            conditions.append("note_tags.tag_id = ?")
+            params.append(tag_id)
+
+        where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+        rows = self._conn.execute(
+            f"SELECT {_NOTE_COLUMNS_QUALIFIED} FROM notes{join}{where} "
+            "ORDER BY notes.updated_at DESC, notes.id DESC",
+            params,
+        ).fetchall()
         return [Note(*row) for row in rows]
 
     def update_note(
@@ -295,3 +332,95 @@ class Repository:
         cur = self._conn.execute("DELETE FROM notes WHERE id = ?", (note_id,))
         self._conn.commit()
         return cur.rowcount > 0
+
+    # -- tags ----------------------------------------------------------------
+
+    def create_tag(self, name: str) -> Tag:
+        """Insert a tag and return it with its generated id.
+
+        Tag names are unique (``tags.name`` has a ``UNIQUE`` constraint), so
+        inserting a name that already exists raises ``sqlcipher3.IntegrityError`` —
+        call :meth:`get_tag_by_name` first for get-or-create behaviour.
+        """
+        cur = self._conn.execute("INSERT INTO tags (name) VALUES (?)", (name,))
+        self._conn.commit()
+        created = self.get_tag(cur.lastrowid)
+        assert created is not None  # just inserted within this connection
+        return created
+
+    def get_tag(self, tag_id: int) -> Tag | None:
+        """Return the tag with ``tag_id``, or ``None`` if absent."""
+        row = self._conn.execute(
+            f"SELECT {_TAG_COLUMNS} FROM tags WHERE id = ?",
+            (tag_id,),
+        ).fetchone()
+        return Tag(*row) if row is not None else None
+
+    def get_tag_by_name(self, name: str) -> Tag | None:
+        """Return the tag named ``name``, or ``None`` if no tag has that name.
+
+        The lookup half of a get-or-create when a UI assigns tags by name. The
+        ``UNIQUE`` constraint is case-sensitive, so the match is exact.
+        """
+        row = self._conn.execute(
+            f"SELECT {_TAG_COLUMNS} FROM tags WHERE name = ?",
+            (name,),
+        ).fetchone()
+        return Tag(*row) if row is not None else None
+
+    def list_tags(self) -> list[Tag]:
+        """Return every tag, ordered by name (case-insensitive) then id."""
+        rows = self._conn.execute(
+            f"SELECT {_TAG_COLUMNS} FROM tags ORDER BY name COLLATE NOCASE, id"
+        ).fetchall()
+        return [Tag(*row) for row in rows]
+
+    def delete_tag(self, tag_id: int) -> bool:
+        """Delete a tag; return ``True`` if a row was removed.
+
+        The tag's ``note_tags`` join rows cascade away, so it disappears from every
+        note that carried it; the notes themselves are untouched.
+        """
+        cur = self._conn.execute("DELETE FROM tags WHERE id = ?", (tag_id,))
+        self._conn.commit()
+        return cur.rowcount > 0
+
+    # -- note <-> tag association --------------------------------------------
+
+    def add_tag_to_note(self, note_id: int, tag_id: int) -> None:
+        """Attach ``tag_id`` to ``note_id``; a no-op if already attached.
+
+        Idempotent: ``INSERT OR IGNORE`` swallows the composite-PK conflict when the
+        tag is already on the note, so re-adding is harmless. A ``note_id`` or
+        ``tag_id`` that does not exist still raises ``sqlcipher3.IntegrityError``
+        (the foreign keys are enforced).
+        """
+        self._conn.execute(
+            "INSERT OR IGNORE INTO note_tags (note_id, tag_id) VALUES (?, ?)",
+            (note_id, tag_id),
+        )
+        self._conn.commit()
+
+    def remove_tag_from_note(self, note_id: int, tag_id: int) -> bool:
+        """Detach ``tag_id`` from ``note_id``; return ``True`` if it was attached."""
+        cur = self._conn.execute(
+            "DELETE FROM note_tags WHERE note_id = ? AND tag_id = ?",
+            (note_id, tag_id),
+        )
+        self._conn.commit()
+        return cur.rowcount > 0
+
+    def tags_for_note(self, note_id: int) -> list[Tag]:
+        """Return the tags attached to ``note_id``, ordered by name.
+
+        An empty list if the note has no tags (or does not exist) — this is a read,
+        so a missing note simply has no join rows.
+        """
+        rows = self._conn.execute(
+            "SELECT tags.id, tags.name FROM tags "
+            "JOIN note_tags ON note_tags.tag_id = tags.id "
+            "WHERE note_tags.note_id = ? "
+            "ORDER BY tags.name COLLATE NOCASE, tags.id",
+            (note_id,),
+        ).fetchall()
+        return [Tag(*row) for row in rows]
