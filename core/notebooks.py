@@ -84,3 +84,43 @@ def build_notebook_tree(notebooks: list[Notebook]) -> list[NotebookNode]:
             roots.append(build(nb, frozenset()))
 
     return roots
+
+
+def would_create_cycle(
+    notebooks: list[Notebook],
+    notebook_id: int,
+    new_parent_id: int | None,
+) -> bool:
+    """Return ``True`` if re-parenting ``notebook_id`` under ``new_parent_id``
+    would create a cycle.
+
+    Moving a notebook back to the top level (``new_parent_id is None``) can never
+    create a cycle. Otherwise a cycle forms exactly when ``new_parent_id`` is
+    ``notebook_id`` itself (a notebook can't be its own parent) or one of
+    ``notebook_id``'s descendants — making ``notebook_id`` an ancestor of its own
+    new parent.
+
+    Detected by walking *up* the parent chain from ``new_parent_id``: if that
+    chain reaches ``notebook_id``, the move is a cycle. A ``new_parent_id`` that
+    matches no notebook in the list would become an effective root (the same way
+    :func:`build_notebook_tree` treats unknown parents), so its chain can't reach
+    ``notebook_id`` and the move is allowed. A ``seen`` set keeps the walk finite
+    even if the existing data already contains a cycle.
+
+    This is the guard the data layer lacks: :meth:`core.repository.Repository.update_notebook`
+    will set any ``parent_id`` it is given, so callers re-parenting a notebook must
+    check this first.
+    """
+    if new_parent_id is None:
+        return False
+
+    by_id: dict[int, Notebook] = {nb.id: nb for nb in notebooks}
+    current: int | None = new_parent_id
+    seen: set[int] = set()
+    while current is not None and current not in seen:
+        if current == notebook_id:
+            return True
+        seen.add(current)
+        parent = by_id.get(current)
+        current = parent.parent_id if parent is not None else None
+    return False
