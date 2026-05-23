@@ -89,9 +89,18 @@ class MainWindow(QMainWindow):
 
     :attr:`search_input` filters :attr:`note_list` live (full-text search via
     :meth:`core.repository.Repository.search_notes`); selecting a row loads that note
-    into the editor. **Ctrl+P** opens the quick-switcher
-    (:class:`ui.quick_switcher.QuickSwitcher`) to jump to any note by fuzzy title
-    match. :attr:`splitter` is the central :class:`QSplitter` holding the three
+    into the editor.
+
+    **Keyboard-first navigation** (M5) lets the app be driven without the mouse:
+
+    * **Ctrl+P** — open the quick-switcher (:class:`ui.quick_switcher.QuickSwitcher`)
+      to jump to any note by fuzzy title match.
+    * **Ctrl+1 / Ctrl+2 / Ctrl+3** — move focus to the notebook tree / note list /
+      editor source (:meth:`focus_notebook_tree` / :meth:`focus_note_list` /
+      :meth:`focus_editor`).
+    * **Ctrl+F** — focus the search box and select its text (:meth:`focus_search`).
+
+    :attr:`splitter` is the central :class:`QSplitter` holding the three
     (logical) panes. :attr:`autosave` is the debounced auto-save controller and
     :attr:`repository` the keyed data layer, both ``None`` until :meth:`bind_autosave`
     is called by the M4 unlock flow. :attr:`current_notebook_id` is the notebook the
@@ -174,6 +183,18 @@ class MainWindow(QMainWindow):
         # Ctrl+P opens the quick-switcher to jump to a note by fuzzy title match.
         self.quick_switch_shortcut = QShortcut(QKeySequence("Ctrl+P"), self)
         self.quick_switch_shortcut.activated.connect(self.open_quick_switcher)
+
+        # Keyboard-first navigation: jump focus between the three panes and the
+        # search box without the mouse. Each shortcut routes to a public seam
+        # method (mirroring Ctrl+P) so the behaviour is headless-testable.
+        self.focus_tree_shortcut = QShortcut(QKeySequence("Ctrl+1"), self)
+        self.focus_tree_shortcut.activated.connect(self.focus_notebook_tree)
+        self.focus_list_shortcut = QShortcut(QKeySequence("Ctrl+2"), self)
+        self.focus_list_shortcut.activated.connect(self.focus_note_list)
+        self.focus_editor_shortcut = QShortcut(QKeySequence("Ctrl+3"), self)
+        self.focus_editor_shortcut.activated.connect(self.focus_editor)
+        self.focus_search_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
+        self.focus_search_shortcut.activated.connect(self.focus_search)
 
         # File menu: import notes from a legacy notes.db into the open vault.
         file_menu = self.menuBar().addMenu("&File")
@@ -264,6 +285,29 @@ class MainWindow(QMainWindow):
     def _on_toggle_dark_theme(self, checked: bool) -> None:
         """View-menu handler: switch to the dark theme, or back to light (native)."""
         self.apply_theme("dark" if checked else "light")
+
+    # -- keyboard-first navigation -------------------------------------------
+
+    def focus_notebook_tree(self) -> None:
+        """Move keyboard focus to the notebooks tree (Ctrl+1)."""
+        self.notebook_tree.setFocus()
+
+    def focus_note_list(self) -> None:
+        """Move keyboard focus to the note list (Ctrl+2)."""
+        self.note_list.setFocus()
+
+    def focus_editor(self) -> None:
+        """Move keyboard focus to the editor's editable source pane (Ctrl+3)."""
+        self.editor.source.setFocus()
+
+    def focus_search(self) -> None:
+        """Move keyboard focus to the search box and select its text (Ctrl+F).
+
+        Selecting the existing query lets the user immediately type a new search
+        (the next keystroke replaces it) without first clearing the field.
+        """
+        self.search_input.setFocus()
+        self.search_input.selectAll()
 
     def refresh_notes(self) -> None:
         """Repopulate the note list from the repository for the current view.
