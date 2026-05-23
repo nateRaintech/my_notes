@@ -51,6 +51,7 @@ from ui.editor import MarkdownEditor
 from ui.import_wizard import ImportWizard
 from ui.quick_switcher import QuickSwitcher
 from ui.settings_dialog import SettingsDialog
+from ui.tag_editor import TagEditorDialog
 
 if TYPE_CHECKING:
     import os
@@ -87,8 +88,9 @@ class MainWindow(QMainWindow):
       the note list to it; a right-click menu creates / renames / moves (re-parents)
       / deletes notebooks. Populated from the repository by
       :meth:`_populate_notebook_tree`. Right-clicking a note in :attr:`note_list`
-      moves it to another notebook (:meth:`move_note`) or deletes it
-      (:meth:`delete_note`, after a confirmation prompt).
+      moves it to another notebook (:meth:`move_note`), assigns / removes its
+      tags (:meth:`open_tag_editor`), or deletes it (:meth:`delete_note`, after
+      a confirmation prompt).
     * :attr:`note_list` — the note list / search results (middle), sitting below
       :attr:`search_input` inside the composite :attr:`note_pane`.
     * :attr:`editor` — the Markdown editor pane (right): editable source beside a
@@ -902,7 +904,7 @@ class MainWindow(QMainWindow):
         return note
 
     def _show_note_menu(self, pos: QPoint) -> None:
-        """Right-click menu on the note list: move the note, or delete it."""
+        """Right-click menu on the note list: move, edit tags, or delete the note."""
         if self.repository is None:
             return
         item = self.note_list.itemAt(pos)
@@ -915,8 +917,33 @@ class MainWindow(QMainWindow):
         menu.addAction(
             "Move to notebook…", lambda *_: self._prompt_move_note(note)
         )
+        menu.addAction("Tags…", lambda *_: self.open_tag_editor(note))
         menu.addAction("Delete", lambda *_: self._prompt_delete_note(note))
         menu.exec(self.note_list.viewport().mapToGlobal(pos))
+
+    def open_tag_editor(self, note: Note) -> None:
+        """Open the tag editor for ``note`` to assign / remove its tags.
+
+        Runs the modal :class:`~ui.tag_editor.TagEditorDialog`, which mutates the
+        vault live (each add / remove commits immediately), so there is nothing to
+        apply on close. A no-op until a repository is bound (no vault open). Driven
+        by the note-list right-click "Tags…" action.
+        """
+        dialog = self._make_tag_editor(note)
+        if dialog is None:
+            return
+        dialog.exec()
+
+    def _make_tag_editor(self, note: Note) -> TagEditorDialog | None:
+        """Construct a tag editor for ``note``, or ``None`` if no repository.
+
+        Separated from :meth:`open_tag_editor` so tests can drive the dialog
+        directly without the modal event loop (mirroring :meth:`_make_quick_switcher`
+        / :meth:`_make_import_wizard`).
+        """
+        if self.repository is None:
+            return None
+        return TagEditorDialog(self.repository, note.id, parent=self)
 
     def _prompt_move_note(self, note: Note) -> None:
         """Ask for a target notebook and move the note via :meth:`move_note`.
