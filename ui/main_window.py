@@ -87,7 +87,8 @@ class MainWindow(QMainWindow):
       the note list to it; a right-click menu creates / renames / moves (re-parents)
       / deletes notebooks. Populated from the repository by
       :meth:`_populate_notebook_tree`. Right-clicking a note in :attr:`note_list`
-      moves it to another notebook (:meth:`move_note`).
+      moves it to another notebook (:meth:`move_note`) or deletes it
+      (:meth:`delete_note`, after a confirmation prompt).
     * :attr:`note_list` — the note list / search results (middle), sitting below
       :attr:`search_input` inside the composite :attr:`note_pane`.
     * :attr:`editor` — the Markdown editor pane (right): editable source beside a
@@ -857,6 +858,33 @@ class MainWindow(QMainWindow):
                 self.note_list.setCurrentRow(i)
                 return
 
+    def delete_note(self, note_id: int) -> bool:
+        """Delete a note from the vault and refresh the list; ``True`` if removed.
+
+        If the deleted note is the one currently open in the editor (bound to
+        auto-save), it is first detached from auto-save and the editor cleared —
+        otherwise a later flush would try to ``update_note`` a now-deleted row
+        and raise :class:`~core.repository.NotFoundError`, and stale plaintext
+        would linger on screen. Deleting any other note leaves the editor
+        untouched. Returns ``False`` when no repository is bound (no vault open).
+        Driven by the note-list right-click "Delete" action (which confirms first
+        via :meth:`_prompt_delete_note`) and callable directly in tests.
+        """
+        if self.repository is None:
+            return False
+        editing_deleted = (
+            self.autosave is not None and self.autosave.saver.note_id == note_id
+        )
+        deleted = self.repository.delete_note(note_id)
+        if deleted and editing_deleted:
+            # Detach the deleted note before clearing the editor: set_markdown("")
+            # emits textChanged, but with no note bound the saver ignores the
+            # edit, so nothing flushes to the deleted row.
+            self.autosave.saver.load(None)
+            self.editor.set_markdown("")
+        self.refresh_notes()
+        return deleted
+
     def move_note(self, note_id: int, notebook_id: int | None) -> Note | None:
         """Move a note into ``notebook_id`` (``None`` = the root) and refresh.
 
@@ -874,7 +902,7 @@ class MainWindow(QMainWindow):
         return note
 
     def _show_note_menu(self, pos: QPoint) -> None:
-        """Right-click menu on the note list: move the note to another notebook."""
+        """Right-click menu on the note list: move the note, or delete it."""
         if self.repository is None:
             return
         item = self.note_list.itemAt(pos)
@@ -887,6 +915,7 @@ class MainWindow(QMainWindow):
         menu.addAction(
             "Move to notebook…", lambda *_: self._prompt_move_note(note)
         )
+        menu.addAction("Delete", lambda *_: self._prompt_delete_note(note))
         menu.exec(self.note_list.viewport().mapToGlobal(pos))
 
     def _prompt_move_note(self, note: Note) -> None:
@@ -908,3 +937,21 @@ class MainWindow(QMainWindow):
                 if label == choice:
                     self.move_note(note.id, target_id)
                     break
+
+    def _prompt_delete_note(self, note: Note) -> None:
+        """Confirm, then delete ``note`` via :meth:`delete_note`.
+
+        Shows a Yes/No confirmation before removing the note — deletion is
+        irreversible (there is no trash). Driven by the note-list right-click
+        "Delete" action.
+        """
+        if self.repository is None:
+            return
+        label = note.title.strip() or derive_title(note.body)
+        reply = QMessageBox.question(
+            self,
+            "Delete note",
+            f"Delete “{label}”?\nThis cannot be undone.",
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self.delete_note(note.id)
