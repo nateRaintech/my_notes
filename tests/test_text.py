@@ -6,7 +6,7 @@ including CI where the Qt runtime is not installed. Per CLAUDE.md's strict
 layering, ``core/`` is the Qt-free, unit-testable layer.
 """
 
-from core.text import derive_title
+from core.text import count_words, derive_title
 
 
 def test_atx_heading_becomes_title():
@@ -59,3 +59,44 @@ def test_custom_fallback_is_respected():
 
 def test_empty_heading_falls_back():
     assert derive_title("#") == "Untitled"
+
+
+# -- count_words -------------------------------------------------------------
+
+
+def test_count_words_empty_is_zero():
+    assert count_words("") == 0
+
+
+def test_count_words_whitespace_only_is_zero():
+    assert count_words("   \n\t\n  ") == 0
+
+
+def test_count_words_simple_sentence():
+    assert count_words("hello world") == 2
+
+
+def test_count_words_collapses_runs_of_whitespace():
+    # Multiple spaces, tabs, and newlines all act as a single separator.
+    assert count_words("one   two\tthree\n\nfour") == 4
+
+
+def test_count_words_ignores_lone_markdown_punctuation():
+    # A heading marker, a bullet, and a horizontal rule are not words on their
+    # own — only the actual text counts.
+    assert count_words("# Heading") == 1
+    assert count_words("- item one") == 2
+    assert count_words("---") == 0
+
+
+def test_count_words_counts_word_wrapped_in_markup_once():
+    assert count_words("**bold** and _italic_") == 3
+
+
+def test_count_words_counts_numbers_and_alphanumerics():
+    assert count_words("page 42 of 100") == 4
+
+
+def test_count_words_counts_unicode_letters():
+    # str.isalnum() is Unicode-aware, so accented words still count.
+    assert count_words("café déjà vu") == 3
