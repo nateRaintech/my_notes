@@ -1,0 +1,158 @@
+/* Dark theme for my_notes (M5).
+ *
+ * Loaded by core.theme.load_stylesheet("dark") and applied to the main window
+ * via MainWindow.apply_theme(). Child dialogs parented to the window (the
+ * quick-switcher, the import wizard) inherit these rules. The "light" theme is
+ * the native Qt look — an empty stylesheet — so toggling back clears all of this.
+ */
+
+QWidget {
+    background-color: #1e1e1e;
+    color: #d4d4d4;
+    selection-background-color: #094771;
+    selection-color: #ffffff;
+}
+
+QMainWindow,
+QDialog,
+QWizard {
+    background-color: #1e1e1e;
+}
+
+QMenuBar {
+    background-color: #252526;
+    color: #d4d4d4;
+}
+
+QMenuBar::item:selected {
+    background-color: #094771;
+}
+
+QMenu {
+    background-color: #252526;
+    color: #d4d4d4;
+    border: 1px solid #3c3c3c;
+}
+
+QMenu::item:selected {
+    background-color: #094771;
+}
+
+QStatusBar {
+    background-color: #252526;
+    color: #9d9d9d;
+}
+
+QToolTip {
+    background-color: #252526;
+    color: #d4d4d4;
+    border: 1px solid #3c3c3c;
+}
+
+QSplitter::handle {
+    background-color: #3c3c3c;
+}
+
+QTreeWidget,
+QListWidget,
+QLineEdit,
+QPlainTextEdit,
+QTextEdit {
+    background-color: #252526;
+    color: #d4d4d4;
+    border: 1px solid #3c3c3c;
+    selection-background-color: #094771;
+    selection-color: #ffffff;
+}
+
+/* The editor's source and preview read better on the darkest surface. */
+QPlainTextEdit,
+QTextEdit {
+    background-color: #1e1e1e;
+}
+
+QLineEdit {
+    padding: 3px;
+}
+
+QTreeWidget::item:selected,
+QListWidget::item:selected {
+    background-color: #094771;
+    color: #ffffff;
+}
+
+QTreeWidget::item:hover,
+QListWidget::item:hover {
+    background-color: #2a2d2e;
+}
+
+QHeaderView::section {
+    background-color: #252526;
+    color: #d4d4d4;
+    border: none;
+    border-bottom: 1px solid #3c3c3c;
+    padding: 4px;
+}
+
+QPushButton {
+    background-color: #0e639c;
+    color: #ffffff;
+    border: none;
+    padding: 5px 14px;
+    border-radius: 2px;
+}
+
+QPushButton:hover {
+    background-color: #1177bb;
+}
+
+QPushButton:pressed {
+    background-color: #0d5689;
+}
+
+QPushButton:disabled {
+    background-color: #3c3c3c;
+    color: #777777;
+}
+
+QScrollBar:vertical {
+    background-color: #1e1e1e;
+    width: 12px;
+    margin: 0;
+}
+
+QScrollBar::handle:vertical {
+    background-color: #424242;
+    min-height: 24px;
+    border-radius: 6px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background-color: #4f4f4f;
+}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0;
+}
+
+QScrollBar:horizontal {
+    background-color: #1e1e1e;
+    height: 12px;
+    margin: 0;
+}
+
+QScrollBar::handle:horizontal {
+    background-color: #424242;
+    min-width: 24px;
+    border-radius: 6px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background-color: #4f4f4f;
+}
+
+QScrollBar::add-line:horizontal,
+QScrollBar::sub-line:horizontal {
+    width: 0;
+}
