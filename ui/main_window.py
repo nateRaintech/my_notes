@@ -7,15 +7,19 @@ editor pane, note-list population and auto-save fill the list, tags extend the
 tree, and the M4 unlock flow feeds them from ``core.repository.Repository`` over
 the keyed vault connection.
 
-This module builds the *shell only* — the named, typed panes those capabilities
-populate. It deliberately binds no data or behavior yet, so the panes start
-empty.
+This module builds the *shell* — the named, typed panes those capabilities
+populate. Data binding stays out until a vault is opened: the editor edits text
+with nowhere to persist until :meth:`MainWindow.bind_autosave` is called with a
+keyed repository (the M4 unlock flow does this), at which point :meth:`load_note`
+opens a note for editing and debounced auto-save persists it.
 
 Per CLAUDE.md's strict layering, the UI layer may import Qt freely; ``core/``
 must never import this module.
 """
 
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -25,7 +29,12 @@ from PySide6.QtWidgets import (
     QTreeWidget,
 )
 
+from core.autosave import DEFAULT_DEBOUNCE_SECONDS
+from ui.autosave import AutoSaveController
 from ui.editor import MarkdownEditor
+
+if TYPE_CHECKING:
+    from core.repository import Note, Repository
 
 WINDOW_TITLE = "my_notes"
 DEFAULT_SIZE = (1000, 700)
@@ -53,13 +62,18 @@ class MainWindow(QMainWindow):
     * :attr:`editor` — the Markdown editor pane (right): editable source beside a
       live-rendered preview (see :class:`ui.editor.MarkdownEditor`).
 
-    :attr:`splitter` is the central :class:`QSplitter` holding them.
+    :attr:`splitter` is the central :class:`QSplitter` holding them. :attr:`autosave`
+    is the debounced auto-save controller once :meth:`bind_autosave` is called, and
+    ``None`` until then.
     """
 
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(WINDOW_TITLE)
         self.resize(*DEFAULT_SIZE)
+
+        # No repository until a vault is opened; auto-save is bound later.
+        self.autosave: AutoSaveController | None = None
 
         self.notebook_tree = QTreeWidget()
         self.notebook_tree.setHeaderLabel("Notebooks")
@@ -87,3 +101,32 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.splitter)
 
         self.statusBar().showMessage("Ready")
+
+    def bind_autosave(
+        self,
+        repository: Repository,
+        *,
+        debounce: float = DEFAULT_DEBOUNCE_SECONDS,
+    ) -> AutoSaveController:
+        """Attach debounced auto-save to the editor, backed by ``repository``.
+
+        Constructs an :class:`~ui.autosave.AutoSaveController` over :attr:`editor`,
+        stores it as :attr:`autosave`, and returns it. The M4 unlock flow calls this
+        once it has a keyed :class:`~core.repository.Repository`; until then the
+        editor edits text with nowhere to persist.
+        """
+        self.autosave = AutoSaveController(
+            self.editor, repository, debounce=debounce, parent=self
+        )
+        return self.autosave
+
+    def load_note(self, note: Note) -> None:
+        """Load ``note`` into the editor for editing (and debounced auto-saving).
+
+        If auto-save is bound, this also flushes the previously-open note and binds
+        the new one; otherwise it just shows the note's body.
+        """
+        if self.autosave is None:
+            self.editor.set_markdown(note.body)
+            return
+        self.autosave.load_note(note)
