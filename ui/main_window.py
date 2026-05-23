@@ -26,6 +26,7 @@ from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QDialog,
     QInputDialog,
+    QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
@@ -41,7 +42,7 @@ from PySide6.QtWidgets import (
 
 from core.autosave import DEFAULT_DEBOUNCE_SECONDS
 from core.notebooks import build_notebook_tree, would_create_cycle
-from core.text import derive_title
+from core.text import count_words, derive_title
 from ui.autosave import AutoSaveController
 from ui.editor import MarkdownEditor
 from ui.import_wizard import ImportWizard
@@ -93,7 +94,8 @@ class MainWindow(QMainWindow):
     (logical) panes. :attr:`autosave` is the debounced auto-save controller and
     :attr:`repository` the keyed data layer, both ``None`` until :meth:`bind_autosave`
     is called by the M4 unlock flow. :attr:`current_notebook_id` is the notebook the
-    note list is filtered to (``None`` = "All Notes", no filter).
+    note list is filtered to (``None`` = "All Notes", no filter). :attr:`word_count_label`
+    is a status-bar widget showing the editor's live word count (M5).
     """
 
     def __init__(self) -> None:
@@ -174,6 +176,14 @@ class MainWindow(QMainWindow):
         self.import_action = file_menu.addAction("Import legacy notes…")
         self.import_action.triggered.connect(self.open_import_wizard)
 
+        # A live word count for the editor, pinned to the right of the status bar
+        # (a permanent widget, so transient showMessage() text never overwrites
+        # it). It updates on every edit and starts at the empty editor's count.
+        self.word_count_label = QLabel()
+        self.statusBar().addPermanentWidget(self.word_count_label)
+        self.editor.source.textChanged.connect(self._update_word_count)
+        self._update_word_count()
+
         self.statusBar().showMessage("Ready")
 
     def bind_autosave(
@@ -207,6 +217,18 @@ class MainWindow(QMainWindow):
             self.editor.set_markdown(note.body)
             return
         self.autosave.load_note(note)
+
+    def _update_word_count(self) -> None:
+        """Refresh the status-bar word count from the editor's current text.
+
+        Connected to the editor source's ``textChanged`` signal, so the count
+        tracks edits live. Counting is delegated to the Qt-free
+        :func:`core.text.count_words`; the label reads ``"1 word"`` /
+        ``"N words"`` with correct singular/plural.
+        """
+        count = count_words(self.editor.markdown())
+        unit = "word" if count == 1 else "words"
+        self.word_count_label.setText(f"{count} {unit}")
 
     def refresh_notes(self) -> None:
         """Repopulate the note list from the repository for the current view.
