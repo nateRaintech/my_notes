@@ -22,7 +22,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QDialog,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
@@ -37,6 +39,7 @@ from core.autosave import DEFAULT_DEBOUNCE_SECONDS
 from core.text import derive_title
 from ui.autosave import AutoSaveController
 from ui.editor import MarkdownEditor
+from ui.quick_switcher import QuickSwitcher
 
 if TYPE_CHECKING:
     from core.repository import Note, Repository
@@ -70,8 +73,10 @@ class MainWindow(QMainWindow):
 
     :attr:`search_input` filters :attr:`note_list` live (full-text search via
     :meth:`core.repository.Repository.search_notes`); selecting a row loads that note
-    into the editor. :attr:`splitter` is the central :class:`QSplitter` holding the
-    three (logical) panes. :attr:`autosave` is the debounced auto-save controller and
+    into the editor. **Ctrl+P** opens the quick-switcher
+    (:class:`ui.quick_switcher.QuickSwitcher`) to jump to any note by fuzzy title
+    match. :attr:`splitter` is the central :class:`QSplitter` holding the three
+    (logical) panes. :attr:`autosave` is the debounced auto-save controller and
     :attr:`repository` the keyed data layer, both ``None`` until :meth:`bind_autosave`
     is called by the M4 unlock flow.
     """
@@ -128,6 +133,10 @@ class MainWindow(QMainWindow):
         self.search_input.textChanged.connect(self._on_search_changed)
         self.note_list.currentItemChanged.connect(self._on_note_selected)
 
+        # Ctrl+P opens the quick-switcher to jump to a note by fuzzy title match.
+        self.quick_switch_shortcut = QShortcut(QKeySequence("Ctrl+P"), self)
+        self.quick_switch_shortcut.activated.connect(self.open_quick_switcher)
+
         self.statusBar().showMessage("Ready")
 
     def bind_autosave(
@@ -178,6 +187,34 @@ class MainWindow(QMainWindow):
             else self.repository.list_notes()
         )
         self._populate_note_list(notes)
+
+    def open_quick_switcher(self) -> None:
+        """Open the Ctrl+P quick-switcher and load the chosen note into the editor.
+
+        Builds a :class:`~ui.quick_switcher.QuickSwitcher` over the vault's notes;
+        if the user picks one, it is loaded into the editor (the same seam a list
+        click uses). A no-op until a repository is bound (no vault open yet).
+        """
+        dialog = self._make_quick_switcher()
+        if dialog is None:
+            return
+        if (
+            dialog.exec() == QDialog.DialogCode.Accepted
+            and dialog.selected_note is not None
+        ):
+            self.load_note(dialog.selected_note)
+
+    def _make_quick_switcher(self) -> QuickSwitcher | None:
+        """Construct a quick-switcher over the current notes, or ``None`` if no
+        repository is bound.
+
+        Separated from :meth:`open_quick_switcher` so tests can drive the dialog
+        directly without the modal event loop (mirroring how the unlock flow is
+        tested via :meth:`ui.unlock_dialog.UnlockDialog.attempt`).
+        """
+        if self.repository is None:
+            return None
+        return QuickSwitcher(self.repository.list_notes(), parent=self)
 
     def _populate_note_list(self, notes: list[Note]) -> None:
         """Replace the list rows with ``notes`` (title, falling back to body)."""
