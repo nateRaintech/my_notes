@@ -1,0 +1,90 @@
+"""The Markdown editor pane: editable source beside a live-rendered preview.
+
+The right pane of the app shell (``ui/main_window.py``). A :class:`MarkdownEditor`
+holds two side-by-side widgets in a non-collapsible :class:`QSplitter`:
+
+* ``source`` — an editable :class:`QPlainTextEdit` holding the raw Markdown.
+* ``preview`` — a read-only :class:`QTextEdit` that re-renders the source via
+  :meth:`QTextEdit.setMarkdown` (which uses ``QTextDocument.setMarkdown()``
+  underneath) on every edit. The preview tracks the source *live* — there is no
+  Save/Render button.
+
+Loading and persisting note bodies is deliberately **out of scope** here: the
+auto-save capability and the note-list/unlock flow wire this widget to
+``core.repository.Repository`` in later M3/M4 work (ROADMAP.md). This widget only
+edits text and shows its rendered form; :meth:`set_markdown` / :meth:`markdown`
+are the seams those capabilities will drive.
+
+Per CLAUDE.md's strict layering, the UI layer may import Qt freely; ``core/``
+must never import this module.
+"""
+
+from __future__ import annotations
+
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QPlainTextEdit,
+    QSplitter,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
+
+# Minimum width each sub-pane keeps so a drag can't squeeze one to nothing
+# (paired with setChildrenCollapsible(False) to keep both source and preview
+# visible).
+_PANE_MIN_WIDTH = 160
+
+
+class MarkdownEditor(QWidget):
+    """Editable Markdown source with a live-rendered preview beside it.
+
+    Attributes:
+        source: the editable :class:`QPlainTextEdit` holding the raw Markdown.
+        preview: the read-only :class:`QTextEdit` showing the rendered Markdown.
+        splitter: the horizontal :class:`QSplitter` holding source | preview.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+
+        self.source = QPlainTextEdit()
+        self.source.setPlaceholderText("Write Markdown here…")
+        self.source.setMinimumWidth(_PANE_MIN_WIDTH)
+
+        self.preview = QTextEdit()
+        self.preview.setReadOnly(True)
+        self.preview.setMinimumWidth(_PANE_MIN_WIDTH)
+
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter.addWidget(self.source)
+        self.splitter.addWidget(self.preview)
+        # Keep both sub-panes visible: a drag can resize but not collapse one.
+        self.splitter.setChildrenCollapsible(False)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.splitter)
+
+        # Live preview: re-render on every edit, with no explicit render action.
+        self.source.textChanged.connect(self._render_preview)
+
+    def _render_preview(self) -> None:
+        """Re-render the preview from the current source text."""
+        self.preview.setMarkdown(self.source.toPlainText())
+
+    def set_markdown(self, text: str) -> None:
+        """Replace the source text; the preview refreshes from it.
+
+        Setting the source emits ``textChanged``, so the preview re-renders
+        automatically — callers don't need to refresh it separately.
+        """
+        self.source.setPlainText(text)
+
+    def markdown(self) -> str:
+        """Return the current Markdown *source* text, verbatim.
+
+        This is the raw Markdown the user typed — not the rendered preview — so
+        it is the value the auto-save capability will persist.
+        """
+        return self.source.toPlainText()
