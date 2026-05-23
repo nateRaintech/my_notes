@@ -65,6 +65,18 @@ DEFAULT_SIZE = (1000, 700)
 # Label for the "no notebook / top level" option in the move pickers.
 _ROOT_CHOICE = "(Root)"
 
+# Custom item-data role + kind markers for the left "notebooks/tags" tree. A
+# notebook row and a tag row both store an int id in UserRole, so the selection
+# handler and the context menu read this role to tell them apart. The "Tags"
+# grouping header is a third, non-selectable kind.
+_KIND_ROLE = int(Qt.ItemDataRole.UserRole) + 1
+_KIND_NOTEBOOK = "notebook"
+_KIND_TAG = "tag"
+_KIND_TAGS_HEADER = "tags-header"
+
+# Label for the "Tags" grouping header in the tree.
+_TAGS_HEADER_LABEL = "Tags"
+
 # Initial pane widths (sidebar, note list, editor), summing to the default
 # window width. The editor pane is widest; the stretch factors below make it
 # absorb window resizing.
@@ -83,14 +95,17 @@ class MainWindow(QMainWindow):
     The three panes are exposed as attributes so later capabilities and tests can
     reach them:
 
-    * :attr:`notebook_tree` — the notebooks tree (left): an "All Notes" root plus
-      the vault's notebooks nested by ``parent_id``. Selecting a notebook filters
-      the note list to it; a right-click menu creates / renames / moves (re-parents)
-      / deletes notebooks. Populated from the repository by
-      :meth:`_populate_notebook_tree`. Right-clicking a note in :attr:`note_list`
-      moves it to another notebook (:meth:`move_note`), assigns / removes its
-      tags (:meth:`open_tag_editor`), or deletes it (:meth:`delete_note`, after
-      a confirmation prompt).
+    * :attr:`notebook_tree` — the notebooks/tags tree (left): an "All Notes" root
+      and the vault's notebooks nested by ``parent_id``, then a "Tags" section
+      listing every tag. Selecting a notebook filters the note list to it;
+      selecting a tag filters to notes carrying that tag (across all notebooks).
+      The notebook and tag filters are mutually exclusive — selecting one clears
+      the other, and "All Notes" clears both. A right-click menu on a notebook
+      creates / renames / moves (re-parents) / deletes notebooks. Populated from
+      the repository by :meth:`_populate_notebook_tree`. Right-clicking a note in
+      :attr:`note_list` moves it to another notebook (:meth:`move_note`), assigns /
+      removes its tags (:meth:`open_tag_editor`), or deletes it (:meth:`delete_note`,
+      after a confirmation prompt).
     * :attr:`note_list` — the note list / search results (middle), sitting below
       :attr:`search_input` inside the composite :attr:`note_pane`.
     * :attr:`editor` — the Markdown editor pane (right): editable source beside a
@@ -113,7 +128,9 @@ class MainWindow(QMainWindow):
     (logical) panes. :attr:`autosave` is the debounced auto-save controller and
     :attr:`repository` the keyed data layer, both ``None`` until :meth:`bind_autosave`
     is called by the M4 unlock flow. :attr:`current_notebook_id` is the notebook the
-    note list is filtered to (``None`` = "All Notes", no filter). :attr:`word_count_label`
+    note list is filtered to (``None`` = "All Notes", no filter) and
+    :attr:`current_tag_id` the tag it is filtered to (``None`` = no tag filter); the
+    two are mutually exclusive. :attr:`word_count_label`
     is a status-bar widget showing the editor's live word count (M5). :meth:`apply_theme`
     styles the window via a Qt Style Sheet — the **View → Dark Theme** menu action
     (:attr:`dark_theme_action`) toggles between the dark theme and the native light
@@ -145,6 +162,10 @@ class MainWindow(QMainWindow):
         self.repository: Repository | None = None
         # The notebook the note list is filtered to; None = "All Notes".
         self.current_notebook_id: int | None = None
+        # The tag the note list is filtered to; None = no tag filter. The tag
+        # and notebook filters are mutually exclusive (one tree selection at a
+        # time) — selecting one clears the other.
+        self.current_tag_id: int | None = None
         # True while the session is locked because the window was minimised — so a
         # later restore re-prompts exactly that lock (and minimise fires only once).
         self._minimize_locked = False
@@ -423,6 +444,7 @@ class MainWindow(QMainWindow):
         self.autosave = None
         self.repository = None
         self.current_notebook_id = None
+        self.current_tag_id = None
 
         # Clear the panes with signals blocked so emptying them doesn't fire the
         # selection handlers (now no-ops without a repository, but kept tidy).
@@ -503,19 +525,22 @@ class MainWindow(QMainWindow):
     def refresh_notes(self) -> None:
         """Repopulate the note list from the repository for the current view.
 
-        With an empty search box, lists the notes in the selected notebook
-        (:attr:`current_notebook_id`, or every note when it is ``None`` =
-        "All Notes"), most-recently-updated first. A non-empty search box shows
-        the full-text matches across **all** notebooks — search is global, not
-        scoped to the selected notebook. A no-op until a repository is bound — the
-        M4 unlock flow calls :meth:`bind_autosave`, then ``app.main`` calls this
-        once to fill the list on launch.
+        With an empty search box, lists the notes for the current view: the
+        selected tag (:attr:`current_tag_id`, across all notebooks), else the
+        selected notebook (:attr:`current_notebook_id`, or every note when it is
+        ``None`` = "All Notes"), most-recently-updated first. A non-empty search
+        box shows the full-text matches across **all** notes — search is global,
+        not scoped to the selected notebook or tag. A no-op until a repository is
+        bound — the M4 unlock flow calls :meth:`bind_autosave`, then ``app.main``
+        calls this once to fill the list on launch.
         """
         if self.repository is None:
             return
         query = self.search_input.text().strip()
         if query:
             notes = self.repository.search_notes(query)
+        elif self.current_tag_id is not None:
+            notes = self.repository.list_notes(tag_id=self.current_tag_id)
         elif self.current_notebook_id is None:
             notes = self.repository.list_notes()
         else:
@@ -583,59 +608,101 @@ class MainWindow(QMainWindow):
     # -- notebook tree -------------------------------------------------------
 
     def _populate_notebook_tree(self) -> None:
-        """Rebuild the notebook tree from the repository.
+        """Rebuild the notebooks/tags tree from the repository.
 
-        Shows an "All Notes" root (selecting it clears the notebook filter) above
-        the vault's notebooks nested by ``parent_id`` (via
-        :func:`core.notebooks.build_notebook_tree`). Each item carries its notebook
-        id in ``UserRole`` — ``None`` for the "All Notes" row. A no-op until a
-        repository is bound.
+        Shows an "All Notes" root (selecting it clears all filters) above the
+        vault's notebooks nested by ``parent_id`` (via
+        :func:`core.notebooks.build_notebook_tree`), then — when the vault has any
+        tags — a non-selectable "Tags" header with one row per tag (from
+        :meth:`core.repository.Repository.list_tags`). Each row carries its id in
+        ``UserRole`` (``None`` for "All Notes") and a kind marker in
+        :data:`_KIND_ROLE` so selection and the context menu can tell a notebook
+        row from a tag row. A no-op until a repository is bound.
 
         Signals are blocked during the rebuild so reselecting an item does not
-        spuriously refresh the note list; the previously-selected notebook is
-        re-selected if it still exists, otherwise the selection falls back to
-        "All Notes" (and :attr:`current_notebook_id` is reset to ``None``).
+        spuriously refresh the note list. The previously-active filter is
+        re-selected: the tag if one is active and still exists, otherwise the
+        notebook, otherwise "All Notes" (resetting the stale filter to ``None``).
         """
         if self.repository is None:
             return
 
         tree = self.notebook_tree
-        items_by_id: dict[int | None, QTreeWidgetItem] = {}
+        notebook_items: dict[int | None, QTreeWidgetItem] = {}
+        tag_items: dict[int, QTreeWidgetItem] = {}
 
         tree.blockSignals(True)
         tree.clear()
 
         all_item = QTreeWidgetItem(["All Notes"])
         all_item.setData(0, Qt.ItemDataRole.UserRole, None)
+        all_item.setData(0, _KIND_ROLE, _KIND_NOTEBOOK)
         tree.addTopLevelItem(all_item)
-        items_by_id[None] = all_item
+        notebook_items[None] = all_item
 
         def make_item(node) -> QTreeWidgetItem:
             item = QTreeWidgetItem([node.notebook.name])
             item.setData(0, Qt.ItemDataRole.UserRole, node.notebook.id)
-            items_by_id[node.notebook.id] = item
+            item.setData(0, _KIND_ROLE, _KIND_NOTEBOOK)
+            notebook_items[node.notebook.id] = item
             for child in node.children:
                 item.addChild(make_item(child))
             return item
 
         for node in build_notebook_tree(self.repository.list_notebooks()):
             tree.addTopLevelItem(make_item(node))
+
+        # A "Tags" section below the notebooks — only when tags exist, so a fresh
+        # vault is not cluttered with an empty header. The header groups the tag
+        # rows but is not itself a filter (made non-selectable).
+        tags = self.repository.list_tags()
+        if tags:
+            header = QTreeWidgetItem([_TAGS_HEADER_LABEL])
+            header.setData(0, _KIND_ROLE, _KIND_TAGS_HEADER)
+            header.setFlags(header.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            tree.addTopLevelItem(header)
+            for tag in tags:
+                tag_item = QTreeWidgetItem([tag.name])
+                tag_item.setData(0, Qt.ItemDataRole.UserRole, tag.id)
+                tag_item.setData(0, _KIND_ROLE, _KIND_TAG)
+                header.addChild(tag_item)
+                tag_items[tag.id] = tag_item
+
         tree.expandAll()
 
-        # The filtered notebook may have just been deleted — fall back to All Notes.
-        if self.current_notebook_id not in items_by_id:
-            self.current_notebook_id = None
-        tree.setCurrentItem(items_by_id[self.current_notebook_id])
+        # Restore the active filter's selection. Prefer the tag (if it survives);
+        # otherwise the notebook, falling back to All Notes for a stale filter.
+        if self.current_tag_id is not None and self.current_tag_id in tag_items:
+            tree.setCurrentItem(tag_items[self.current_tag_id])
+        else:
+            self.current_tag_id = None
+            if self.current_notebook_id not in notebook_items:
+                self.current_notebook_id = None
+            tree.setCurrentItem(notebook_items[self.current_notebook_id])
 
         tree.blockSignals(False)
 
     def select_notebook(self, notebook_id: int | None) -> None:
         """Filter the note list to ``notebook_id`` (``None`` = all notebooks).
 
-        Sets :attr:`current_notebook_id` and refreshes the note list. This is the
-        seam the tree's selection signal drives and that tests call directly.
+        Sets :attr:`current_notebook_id`, clears any tag filter (the two are
+        mutually exclusive), and refreshes the note list. This is the seam the
+        tree's selection signal drives and that tests call directly.
         """
         self.current_notebook_id = notebook_id
+        self.current_tag_id = None
+        self.refresh_notes()
+
+    def select_tag(self, tag_id: int) -> None:
+        """Filter the note list to notes carrying ``tag_id`` (across all notebooks).
+
+        Sets :attr:`current_tag_id` and clears any notebook filter (the two are
+        mutually exclusive — a tag view spans every notebook), then refreshes the
+        note list. The seam the tree's tag rows drive and that tests call directly;
+        a no-op against the list until a repository is bound.
+        """
+        self.current_tag_id = tag_id
+        self.current_notebook_id = None
         self.refresh_notes()
 
     def add_notebook(
@@ -709,13 +776,28 @@ class MainWindow(QMainWindow):
     ) -> None:
         if current is None:
             return
-        self.select_notebook(current.data(0, Qt.ItemDataRole.UserRole))
+        kind = current.data(0, _KIND_ROLE)
+        if kind == _KIND_TAG:
+            self.select_tag(current.data(0, Qt.ItemDataRole.UserRole))
+        elif kind == _KIND_NOTEBOOK:
+            self.select_notebook(current.data(0, Qt.ItemDataRole.UserRole))
+        # The "Tags" header is non-selectable, so it never reaches here.
 
     def _show_notebook_menu(self, pos: QPoint) -> None:
-        """Right-click menu on the tree: create / rename / delete notebooks."""
+        """Right-click menu on the tree: create / rename / delete notebooks.
+
+        Only notebook rows (and empty space) get the menu — right-clicking a tag
+        row or the "Tags" header does nothing, since tags are managed per-note via
+        the tag editor, not from here.
+        """
         if self.repository is None:
             return
         item = self.notebook_tree.itemAt(pos)
+        if item is not None and item.data(0, _KIND_ROLE) in (
+            _KIND_TAG,
+            _KIND_TAGS_HEADER,
+        ):
+            return
         notebook_id = (
             item.data(0, Qt.ItemDataRole.UserRole) if item is not None else None
         )
@@ -824,13 +906,13 @@ class MainWindow(QMainWindow):
         """Create a new, empty note in the current view and open it for editing.
 
         Creates the note in the notebook the list is currently filtered to
-        (:attr:`current_notebook_id`; the root when "All Notes" is selected),
-        clears any active search so the new (empty, unmatched) note is visible,
-        refreshes the list, then selects the note — loading it into the editor via
-        the usual selection seam — and moves focus to the editable source so the
-        user can start typing immediately. Debounced auto-save persists the edits
-        (there is no Save button). Returns the created note, or ``None`` if no
-        repository is bound (no vault open yet).
+        (:attr:`current_notebook_id`; the root when "All Notes" or a tag is
+        selected), clears any active search and tag filter so the new (empty,
+        untagged) note is visible, refreshes the list, then selects the note —
+        loading it into the editor via the usual selection seam — and moves focus
+        to the editable source so the user can start typing immediately. Debounced
+        auto-save persists the edits (there is no Save button). Returns the created
+        note, or ``None`` if no repository is bound (no vault open yet).
 
         Driven by the File-menu "New Note" action / Ctrl+N, and callable directly
         in tests.
@@ -838,15 +920,42 @@ class MainWindow(QMainWindow):
         if self.repository is None:
             return None
         note = self.repository.create_note(notebook_id=self.current_notebook_id)
-        # A new note has no title/body, so it would not match an active search;
-        # clear the query (without re-triggering it) so the note shows in the list.
+        # A new note has no title/body/tags, so it would not match an active
+        # search query or tag filter; clear the search (without re-triggering it)
+        # and, if a tag filter is active, reset the view to All Notes so the note
+        # shows in the list. A notebook filter is fine — the note was created
+        # into that notebook.
         self.search_input.blockSignals(True)
         self.search_input.clear()
         self.search_input.blockSignals(False)
+        if self.current_tag_id is not None:
+            self._select_all_notes()
         self.refresh_notes()
         self._select_note(note.id)
         self.focus_editor()
         return note
+
+    def _select_all_notes(self) -> None:
+        """Reset the view to "All Notes", clearing the notebook and tag filters.
+
+        Clears both filters and highlights the "All Notes" tree row (with signals
+        blocked — the caller refreshes the note list). Used when an action must
+        show a note the active tag filter would otherwise hide (e.g. a new,
+        untagged note created from :meth:`new_note`).
+        """
+        self.current_notebook_id = None
+        self.current_tag_id = None
+        tree = self.notebook_tree
+        for i in range(tree.topLevelItemCount()):
+            item = tree.topLevelItem(i)
+            if (
+                item.data(0, _KIND_ROLE) == _KIND_NOTEBOOK
+                and item.data(0, Qt.ItemDataRole.UserRole) is None
+            ):
+                tree.blockSignals(True)
+                tree.setCurrentItem(item)
+                tree.blockSignals(False)
+                return
 
     def _select_note(self, note_id: int) -> None:
         """Select the list row carrying ``note_id``, loading it into the editor.
@@ -926,13 +1035,17 @@ class MainWindow(QMainWindow):
 
         Runs the modal :class:`~ui.tag_editor.TagEditorDialog`, which mutates the
         vault live (each add / remove commits immediately), so there is nothing to
-        apply on close. A no-op until a repository is bound (no vault open). Driven
-        by the note-list right-click "Tags…" action.
+        apply on close. After it closes, the tree is repopulated (a brand-new tag
+        appears in the "Tags" section) and the note list refreshed (a tag-filtered
+        view reflects the note's changed tags). A no-op until a repository is bound
+        (no vault open). Driven by the note-list right-click "Tags…" action.
         """
         dialog = self._make_tag_editor(note)
         if dialog is None:
             return
         dialog.exec()
+        self._populate_notebook_tree()
+        self.refresh_notes()
 
     def _make_tag_editor(self, note: Note) -> TagEditorDialog | None:
         """Construct a tag editor for ``note``, or ``None`` if no repository.
