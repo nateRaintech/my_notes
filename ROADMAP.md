@@ -46,7 +46,7 @@ they are completion work, not new product direction.
 > surface the documented gaps rather than churn speculative fallback work. Reorder
 > or rescope freely — this file is the steering lever.
 
-- [ ] Create a new note from the UI (File menu + Ctrl+N) into the selected notebook, opened in the editor for immediate editing (auto-save persists it)
+- [x] Create a new note from the UI (File menu + Ctrl+N) into the selected notebook, opened in the editor for immediate editing (auto-save persists it) _(done: `MainWindow.new_note() -> Note|None` + a File-menu "New Note" action carrying Ctrl+N (the shortcut deferred in keyboard-nav #51 until an authoring UI existed). Creates an empty note via `repository.create_note(notebook_id=self.current_notebook_id)` (root under All Notes), clears any active search with signals blocked (an empty note matches no query, so it'd otherwise be invisible), `refresh_notes()`, then `_select_note(id)` (new list helper: find the row by `note.id`, `setCurrentRow` → fires the existing `currentItemChanged → load_note` seam, the same path a user click uses) and `focus_editor()`. Empty note lists as "Untitled" (`derive_title("")`). `core/` untouched (uses existing `create_note`). 9 headless behavioral tests in `tests/test_new_note.py`; 394 passed (was 385). — #65 / PR #66)_
 - [ ] Delete the selected note from the UI, with a confirmation prompt
 - [ ] Tag UI: assign / remove tags on the current note and filter the note list by tag (the `core/repository.py` tag layer from #29 already exists)
 
