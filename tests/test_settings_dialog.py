@@ -88,9 +88,10 @@ def test_apply_empty_vault_path_means_default_location(qapp, settings_file):
     assert load_settings(settings_file).vault_path is None
 
 
-def test_apply_preserves_settings_the_dialog_does_not_edit(qapp, settings_file):
-    # idle_timeout_seconds and lock_on_minimize are not edited by this dialog;
-    # apply() must carry them through untouched rather than reset them.
+def test_apply_round_trips_seeded_idle_and_minimize_fields(qapp, settings_file):
+    # The idle timeout and lock-on-minimize controls are seeded from the current
+    # settings; leaving them untouched and changing only the theme must round-trip
+    # those fields unchanged (300s -> 5 min -> 300s; lock_on_minimize stays True).
     current = Settings(
         idle_timeout_seconds=300,
         vault_path=None,
@@ -106,6 +107,62 @@ def test_apply_preserves_settings_the_dialog_does_not_edit(qapp, settings_file):
     assert result.lock_on_minimize is True
     assert result.theme == "dark"
     assert load_settings(settings_file) == result
+
+
+# -- dialog: idle-lock + lock-on-minimize controls --------------------------
+
+
+def test_dialog_shows_idle_timeout_and_lock_on_minimize(qapp, settings_file):
+    current = Settings(idle_timeout_seconds=600, lock_on_minimize=True)
+    dialog = SettingsDialog(current, settings_path=settings_file)
+    assert dialog.idle_lock_checkbox.isChecked()
+    assert dialog.idle_lock_minutes.isEnabled()
+    assert dialog.idle_lock_minutes.value() == 10  # 600s -> 10 min
+    assert dialog.lock_on_minimize_checkbox.isChecked()
+
+
+def test_dialog_idle_disabled_unchecks_and_disables_spinbox(qapp, settings_file):
+    dialog = SettingsDialog(Settings(idle_timeout_seconds=None), settings_path=settings_file)
+    assert not dialog.idle_lock_checkbox.isChecked()
+    assert not dialog.idle_lock_minutes.isEnabled()
+
+
+def test_toggling_idle_checkbox_enables_the_spinbox(qapp, settings_file):
+    dialog = SettingsDialog(Settings(idle_timeout_seconds=None), settings_path=settings_file)
+    assert not dialog.idle_lock_minutes.isEnabled()
+    dialog.idle_lock_checkbox.setChecked(True)
+    assert dialog.idle_lock_minutes.isEnabled()
+
+
+def test_apply_enabled_idle_lock_writes_seconds(qapp, settings_file):
+    dialog = SettingsDialog(Settings(idle_timeout_seconds=None), settings_path=settings_file)
+    dialog.idle_lock_checkbox.setChecked(True)
+    dialog.idle_lock_minutes.setValue(3)
+
+    result = dialog.apply()
+
+    assert result.idle_timeout_seconds == 180  # 3 min -> 180s
+    assert load_settings(settings_file).idle_timeout_seconds == 180
+
+
+def test_apply_disabled_idle_lock_writes_none(qapp, settings_file):
+    dialog = SettingsDialog(Settings(idle_timeout_seconds=300), settings_path=settings_file)
+    dialog.idle_lock_checkbox.setChecked(False)
+
+    result = dialog.apply()
+
+    assert result.idle_timeout_seconds is None
+    assert load_settings(settings_file).idle_timeout_seconds is None
+
+
+def test_apply_lock_on_minimize_round_trips(qapp, settings_file):
+    dialog = SettingsDialog(Settings(lock_on_minimize=False), settings_path=settings_file)
+    dialog.lock_on_minimize_checkbox.setChecked(True)
+
+    result = dialog.apply()
+
+    assert result.lock_on_minimize is True
+    assert load_settings(settings_file).lock_on_minimize is True
 
 
 def test_cancel_persists_nothing(qapp, settings_file):
