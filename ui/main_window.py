@@ -366,6 +366,56 @@ class MainWindow(QMainWindow):
         self.settings = settings
         self.apply_theme(settings.theme)
 
+    # -- session lock --------------------------------------------------------
+
+    def flush_pending(self) -> None:
+        """Persist any pending auto-save edit immediately.
+
+        Called just before the vault auto-locks (while its connection is still
+        open) so an in-flight edit is not lost when the key is wiped. A no-op when
+        no auto-save is bound.
+        """
+        if self.autosave is not None:
+            self.autosave.flush()
+
+    def lock_session(self) -> None:
+        """Clear all decrypted content and detach the data layer after an auto-lock.
+
+        When the vault idle-locks, its key is wiped and its connection closed, so
+        the repository is unusable and any note text still on screen is stale
+        plaintext. This stops auto-save, drops the :attr:`repository` /
+        :attr:`autosave` references, and clears the editor, note list, notebook
+        tree, and search box so nothing decrypted lingers. The window stays open
+        for the re-unlock prompt; ``app`` re-binds a fresh repository via
+        :meth:`bind_autosave` once the user unlocks again.
+
+        Safe to call after the vault has locked: auto-save was already flushed via
+        :meth:`flush_pending` on ``about_to_lock``, so stopping it writes nothing
+        to the closed connection.
+        """
+        if self.autosave is not None:
+            self.autosave.stop()
+        self.autosave = None
+        self.repository = None
+        self.current_notebook_id = None
+
+        # Clear the panes with signals blocked so emptying them doesn't fire the
+        # selection handlers (now no-ops without a repository, but kept tidy).
+        self.note_list.blockSignals(True)
+        self.note_list.clear()
+        self.note_list.blockSignals(False)
+
+        self.notebook_tree.blockSignals(True)
+        self.notebook_tree.clear()
+        self.notebook_tree.blockSignals(False)
+
+        self.search_input.blockSignals(True)
+        self.search_input.clear()
+        self.search_input.blockSignals(False)
+
+        self.editor.set_markdown("")
+        self.statusBar().showMessage("Vault locked")
+
     # -- keyboard-first navigation -------------------------------------------
 
     def focus_notebook_tree(self) -> None:
