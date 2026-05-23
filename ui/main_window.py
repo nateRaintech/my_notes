@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
 from core.autosave import DEFAULT_DEBOUNCE_SECONDS
 from core.notebooks import build_notebook_tree, would_create_cycle
 from core.text import count_words, derive_title
+from core.theme import DEFAULT_THEME, load_stylesheet
 from ui.autosave import AutoSaveController
 from ui.editor import MarkdownEditor
 from ui.import_wizard import ImportWizard
@@ -95,7 +96,10 @@ class MainWindow(QMainWindow):
     :attr:`repository` the keyed data layer, both ``None`` until :meth:`bind_autosave`
     is called by the M4 unlock flow. :attr:`current_notebook_id` is the notebook the
     note list is filtered to (``None`` = "All Notes", no filter). :attr:`word_count_label`
-    is a status-bar widget showing the editor's live word count (M5).
+    is a status-bar widget showing the editor's live word count (M5). :meth:`apply_theme`
+    styles the window via a Qt Style Sheet — the **View → Dark Theme** menu action
+    (:attr:`dark_theme_action`) toggles between the dark theme and the native light
+    look, with :attr:`current_theme` tracking the active one (M5).
     """
 
     def __init__(self) -> None:
@@ -176,6 +180,14 @@ class MainWindow(QMainWindow):
         self.import_action = file_menu.addAction("Import legacy notes…")
         self.import_action.triggered.connect(self.open_import_wizard)
 
+        # View menu: a checkable toggle between the dark theme (QSS) and the
+        # native light look. Connected to triggered (the user activating it), not
+        # toggled, so apply_theme()'s setChecked() sync never re-enters here.
+        view_menu = self.menuBar().addMenu("&View")
+        self.dark_theme_action = view_menu.addAction("&Dark Theme")
+        self.dark_theme_action.setCheckable(True)
+        self.dark_theme_action.triggered.connect(self._on_toggle_dark_theme)
+
         # A live word count for the editor, pinned to the right of the status bar
         # (a permanent widget, so transient showMessage() text never overwrites
         # it). It updates on every edit and starts at the empty editor's count.
@@ -185,6 +197,12 @@ class MainWindow(QMainWindow):
         self._update_word_count()
 
         self.statusBar().showMessage("Ready")
+
+        # Style the window with the default theme so a freshly opened window is
+        # themed (the user switches via the View menu). Persisting the choice
+        # across launches is the M5 Settings capability; for now it resets to
+        # the default each launch.
+        self.apply_theme(DEFAULT_THEME)
 
     def bind_autosave(
         self,
@@ -229,6 +247,23 @@ class MainWindow(QMainWindow):
         count = count_words(self.editor.markdown())
         unit = "word" if count == 1 else "words"
         self.word_count_label.setText(f"{count} {unit}")
+
+    def apply_theme(self, name: str) -> None:
+        """Apply the theme ``name`` to the window (and its child dialogs).
+
+        Sets the window's stylesheet from :func:`core.theme.load_stylesheet`,
+        records it as :attr:`current_theme`, and keeps the View-menu "Dark Theme"
+        action's checked state in sync. Child dialogs parented to the window —
+        the quick-switcher and the import wizard — inherit the stylesheet. Raises
+        :class:`ValueError` for an unknown theme name.
+        """
+        self.setStyleSheet(load_stylesheet(name))
+        self.current_theme = name
+        self.dark_theme_action.setChecked(name == "dark")
+
+    def _on_toggle_dark_theme(self, checked: bool) -> None:
+        """View-menu handler: switch to the dark theme, or back to light (native)."""
+        self.apply_theme("dark" if checked else "light")
 
     def refresh_notes(self) -> None:
         """Repopulate the note list from the repository for the current view.
