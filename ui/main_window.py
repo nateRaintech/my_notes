@@ -23,13 +23,18 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QLineEdit,
     QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QSplitter,
     QTreeWidget,
+    QVBoxLayout,
+    QWidget,
 )
 
 from core.autosave import DEFAULT_DEBOUNCE_SECONDS
+from core.text import derive_title
 from ui.autosave import AutoSaveController
 from ui.editor import MarkdownEditor
 
@@ -58,13 +63,17 @@ class MainWindow(QMainWindow):
     reach them:
 
     * :attr:`notebook_tree` — the notebooks/tags tree (left).
-    * :attr:`note_list` — the note list for the selected scope (middle).
+    * :attr:`note_list` — the note list / search results (middle), sitting below
+      :attr:`search_input` inside the composite :attr:`note_pane`.
     * :attr:`editor` — the Markdown editor pane (right): editable source beside a
       live-rendered preview (see :class:`ui.editor.MarkdownEditor`).
 
-    :attr:`splitter` is the central :class:`QSplitter` holding them. :attr:`autosave`
-    is the debounced auto-save controller once :meth:`bind_autosave` is called, and
-    ``None`` until then.
+    :attr:`search_input` filters :attr:`note_list` live (full-text search via
+    :meth:`core.repository.Repository.search_notes`); selecting a row loads that note
+    into the editor. :attr:`splitter` is the central :class:`QSplitter` holding the
+    three (logical) panes. :attr:`autosave` is the debounced auto-save controller and
+    :attr:`repository` the keyed data layer, both ``None`` until :meth:`bind_autosave`
+    is called by the M4 unlock flow.
     """
 
     def __init__(self) -> None:
@@ -74,20 +83,34 @@ class MainWindow(QMainWindow):
 
         # No repository until a vault is opened; auto-save is bound later.
         self.autosave: AutoSaveController | None = None
+        self.repository: Repository | None = None
 
         self.notebook_tree = QTreeWidget()
         self.notebook_tree.setHeaderLabel("Notebooks")
         self.notebook_tree.setMinimumWidth(_SIDEBAR_MIN_WIDTH)
 
+        # Middle pane: a search box above the note list, wrapped in a composite
+        # widget so the splitter still holds three (logical) panes. Typing filters
+        # the list (full-text search); selecting a row loads that note.
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search notes…")
+        self.search_input.setClearButtonEnabled(True)
+
         self.note_list = QListWidget()
-        self.note_list.setMinimumWidth(_NOTE_LIST_MIN_WIDTH)
+
+        self.note_pane = QWidget()
+        self.note_pane.setMinimumWidth(_NOTE_LIST_MIN_WIDTH)
+        note_pane_layout = QVBoxLayout(self.note_pane)
+        note_pane_layout.setContentsMargins(0, 0, 0, 0)
+        note_pane_layout.addWidget(self.search_input)
+        note_pane_layout.addWidget(self.note_list)
 
         self.editor = MarkdownEditor()
         self.editor.setMinimumWidth(_EDITOR_MIN_WIDTH)
 
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.splitter.addWidget(self.notebook_tree)
-        self.splitter.addWidget(self.note_list)
+        self.splitter.addWidget(self.note_pane)
         self.splitter.addWidget(self.editor)
 
         # Keep all three panes visible: a drag can resize but not collapse one.
@@ -100,6 +123,11 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(self.splitter)
 
+        # Live filtering and click-to-load. Selection only loads on an explicit
+        # user action — list rebuilds block signals (see _populate_note_list).
+        self.search_input.textChanged.connect(self._on_search_changed)
+        self.note_list.currentItemChanged.connect(self._on_note_selected)
+
         self.statusBar().showMessage("Ready")
 
     def bind_autosave(
@@ -111,10 +139,12 @@ class MainWindow(QMainWindow):
         """Attach debounced auto-save to the editor, backed by ``repository``.
 
         Constructs an :class:`~ui.autosave.AutoSaveController` over :attr:`editor`,
-        stores it as :attr:`autosave`, and returns it. The M4 unlock flow calls this
-        once it has a keyed :class:`~core.repository.Repository`; until then the
-        editor edits text with nowhere to persist.
+        stores it as :attr:`autosave`, and keeps ``repository`` as :attr:`repository`
+        so the note list can be populated and searched. The M4 unlock flow calls this
+        once it has a keyed :class:`~core.repository.Repository`; until then the editor
+        edits text with nowhere to persist and the note list stays empty.
         """
+        self.repository = repository
         self.autosave = AutoSaveController(
             self.editor, repository, debounce=debounce, parent=self
         )
@@ -130,3 +160,49 @@ class MainWindow(QMainWindow):
             self.editor.set_markdown(note.body)
             return
         self.autosave.load_note(note)
+
+    def refresh_notes(self) -> None:
+        """Repopulate the note list from the repository for the current search.
+
+        With an empty search box, lists every note (most-recently-updated first);
+        otherwise shows the full-text search matches. A no-op until a repository is
+        bound — the M4 unlock flow calls :meth:`bind_autosave`, then ``app.main``
+        calls this once to fill the list on launch.
+        """
+        if self.repository is None:
+            return
+        query = self.search_input.text().strip()
+        notes = (
+            self.repository.search_notes(query)
+            if query
+            else self.repository.list_notes()
+        )
+        self._populate_note_list(notes)
+
+    def _populate_note_list(self, notes: list[Note]) -> None:
+        """Replace the list rows with ``notes`` (title, falling back to body)."""
+        # Rebuild without firing currentItemChanged for the implicit selection
+        # change: a note loads only on an explicit user click, not on every
+        # keystroke that refilters the list.
+        self.note_list.blockSignals(True)
+        self.note_list.clear()
+        for note in notes:
+            label = note.title.strip() or derive_title(note.body)
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, note)
+            self.note_list.addItem(item)
+        self.note_list.blockSignals(False)
+
+    def _on_search_changed(self, _text: str) -> None:
+        self.refresh_notes()
+
+    def _on_note_selected(
+        self,
+        current: QListWidgetItem | None,
+        previous: QListWidgetItem | None,
+    ) -> None:
+        if current is None:
+            return
+        note = current.data(Qt.ItemDataRole.UserRole)
+        if note is not None:
+            self.load_note(note)
