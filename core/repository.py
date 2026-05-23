@@ -242,11 +242,32 @@ class Repository:
         notebook_id: int | None = None,
         title: str = "",
         body: str = "",
+        created_at: str | None = None,
+        updated_at: str | None = None,
     ) -> Note:
-        """Insert a note and return it with its generated id and timestamps."""
+        """Insert a note and return it with its generated id and timestamps.
+
+        ``created_at`` / ``updated_at`` normally come from the schema default
+        (``datetime('now')``) and should be left unset. They exist so an import
+        (:mod:`core.importer`) can preserve a legacy note's original timestamps;
+        each is included in the insert only when given, so omitting one keeps its
+        default while still setting the other.
+        """
+        columns = ["notebook_id", "title", "body"]
+        values: list[Any] = [notebook_id, title, body]
+        if created_at is not None:
+            columns.append("created_at")
+            values.append(created_at)
+        if updated_at is not None:
+            columns.append("updated_at")
+            values.append(updated_at)
+
+        # Column names are fixed constants we control (never user input); only the
+        # values are bound parameters, so the joined column list is not injectable.
+        placeholders = ", ".join("?" * len(values))
         cur = self._conn.execute(
-            "INSERT INTO notes (notebook_id, title, body) VALUES (?, ?, ?)",
-            (notebook_id, title, body),
+            f"INSERT INTO notes ({', '.join(columns)}) VALUES ({placeholders})",
+            values,
         )
         self._conn.commit()
         created = self.get_note(cur.lastrowid)
