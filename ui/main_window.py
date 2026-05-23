@@ -22,7 +22,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QPoint, Qt
+from PySide6.QtCore import QEvent, QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QDialog,
@@ -115,7 +115,22 @@ class MainWindow(QMainWindow):
     styles the window via a Qt Style Sheet — the **View → Dark Theme** menu action
     (:attr:`dark_theme_action`) toggles between the dark theme and the native light
     look, with :attr:`current_theme` tracking the active one (M5).
+
+    **Lock on minimise** (M5 Settings): when :attr:`settings`'
+    ``lock_on_minimize`` is enabled, minimising the window emits
+    :attr:`lock_on_minimize_requested` (``app`` flushes, locks the vault, and
+    clears the session via :meth:`lock_session`) and restoring it emits
+    :attr:`restore_requested` (``app`` re-prompts and rebinds). The window only
+    detects the transitions and decides whether to signal — via the public
+    :meth:`handle_window_state_change` seam, which :meth:`changeEvent` drives — so
+    ``core``/``app`` own the actual lock/re-prompt and the behaviour is
+    headless-testable.
     """
+
+    #: Emitted when the window is minimised and lock-on-minimise should engage.
+    lock_on_minimize_requested = Signal()
+    #: Emitted when the window is restored after a lock-on-minimise.
+    restore_requested = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -127,6 +142,9 @@ class MainWindow(QMainWindow):
         self.repository: Repository | None = None
         # The notebook the note list is filtered to; None = "All Notes".
         self.current_notebook_id: int | None = None
+        # True while the session is locked because the window was minimised — so a
+        # later restore re-prompts exactly that lock (and minimise fires only once).
+        self._minimize_locked = False
 
         # Persisted settings. Until configure_settings() binds a real settings
         # location (the M4/M5 launch flow does), the window runs on defaults and
@@ -415,6 +433,42 @@ class MainWindow(QMainWindow):
 
         self.editor.set_markdown("")
         self.statusBar().showMessage("Vault locked")
+
+    def changeEvent(self, event: QEvent) -> None:
+        """Lock on minimise / re-prompt on restore when lock-on-minimise is enabled.
+
+        Defers the decision to the next event-loop turn so a modal re-prompt that a
+        restore may trigger never runs re-entrantly inside this window-state-change
+        event. The decision itself lives in :meth:`handle_window_state_change` (the
+        public seam tests drive directly, without real window events).
+        """
+        if event.type() == QEvent.Type.WindowStateChange:
+            QTimer.singleShot(
+                0, lambda: self.handle_window_state_change(minimized=self.isMinimized())
+            )
+        super().changeEvent(event)
+
+    def handle_window_state_change(self, *, minimized: bool) -> None:
+        """React to a minimise/restore transition; emit the lock/restore signal.
+
+        On minimising with an active (unlocked) session and ``lock_on_minimize``
+        enabled, mark the session minimise-locked and emit
+        :attr:`lock_on_minimize_requested`. On restoring from such a lock, clear the
+        flag and emit :attr:`restore_requested`. The flag pairs the two so minimise
+        fires once and restore only re-prompts a minimise-initiated lock (an
+        idle-lock, or no lock at all, restores silently).
+        """
+        if minimized:
+            if (
+                not self._minimize_locked
+                and self.settings.lock_on_minimize
+                and self.repository is not None
+            ):
+                self._minimize_locked = True
+                self.lock_on_minimize_requested.emit()
+        elif self._minimize_locked:
+            self._minimize_locked = False
+            self.restore_requested.emit()
 
     # -- keyboard-first navigation -------------------------------------------
 

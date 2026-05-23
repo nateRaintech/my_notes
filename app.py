@@ -14,6 +14,11 @@ re-unlock rebinds a fresh repository and resumes; cancelling quits — the
 conventional KeePass lock-and-reprompt behaviour. With no timeout configured (the
 default) there is no auto-lock and launch behaves exactly as before.
 
+If ``settings.lock_on_minimize`` is set, minimising the window locks the vault and
+clears the session the same way, but defers the re-prompt until the window is
+restored — so the app can sit minimised-and-locked instead of popping a modal at
+once (see :func:`_lock_for_minimize` / :func:`_reprompt_and_rebind`).
+
 The Qt application is created here in :func:`main`; all window logic lives in the
 ``ui`` package and all persistence in ``core``.
 """
@@ -106,6 +111,7 @@ def main() -> int:
     _bind_vault(window, session.vault)  # repository + auto-save + populated panes
 
     idle = _arm_idle_lock(app, window, session, settings, vault_path)
+    _wire_lock_on_minimize(window, session, idle, settings, vault_path)
 
     # Flush any pending edit and lock the (current) vault, wiping the key, on quit.
     app.aboutToQuit.connect(lambda: _shutdown(window, session, idle))
@@ -175,11 +181,28 @@ def _relock(
     """Clear the locked session and re-prompt; rebind on unlock, quit on cancel.
 
     Runs when the vault has just idle-locked. Clears the decrypted UI, then asks
-    for the master password again: a correct password rebinds a fresh repository
-    and re-arms the idle timer; cancelling closes the window (which quits the app,
-    locking the already-locked vault is a harmless no-op).
+    for the master password again (see :func:`_reprompt_and_rebind`).
     """
     window.lock_session()
+    _reprompt_and_rebind(window, session, idle, settings, vault_path)
+
+
+def _reprompt_and_rebind(
+    window: MainWindow,
+    session: _Session,
+    idle: IdleLockController | None,
+    settings: Settings,
+    vault_path: str | os.PathLike[str],
+) -> None:
+    """Re-prompt for the master password and rebind a fresh session, or quit on cancel.
+
+    The vault is already locked and the on-screen session already cleared when this
+    runs (by the idle :func:`_relock` or the minimise :func:`_lock_for_minimize`).
+    A correct password rebinds a fresh repository and re-arms the idle timer (when
+    one is armed); cancelling closes the window (which quits the app — locking the
+    already-locked vault is a harmless no-op). ``idle`` is ``None`` when only
+    lock-on-minimise is configured (no idle timer to re-arm).
+    """
     vault = _open_vault(vault_path)
     if vault is None:
         window.close()
@@ -187,9 +210,52 @@ def _relock(
     if settings.idle_timeout_seconds:
         vault.idle_timeout = settings.idle_timeout_seconds
     session.vault = vault
-    idle.set_vault(vault)
+    if idle is not None:
+        idle.set_vault(vault)
+        idle.start()
     _bind_vault(window, vault)
-    idle.start()
+
+
+def _lock_for_minimize(window: MainWindow, session: _Session) -> None:
+    """Lock the vault and clear the session when the window is minimised.
+
+    Flushes any pending edit over the still-open connection, locks the vault
+    (wiping the key), and clears the decrypted UI. Unlike idle-lock, the re-prompt
+    is deferred until the window is restored (see :func:`_reprompt_and_rebind`),
+    so the app can sit minimised-and-locked rather than popping a modal at once.
+    Any armed idle timer keeps ticking harmlessly — a locked vault never idle-
+    expires — and is re-pointed at the fresh vault on restore. A no-op if the
+    vault is already locked (e.g. an idle-lock got there first).
+    """
+    if session.vault.is_locked:
+        return
+    window.flush_pending()
+    session.vault.lock()
+    window.lock_session()
+
+
+def _wire_lock_on_minimize(
+    window: MainWindow,
+    session: _Session,
+    idle: IdleLockController | None,
+    settings: Settings,
+    vault_path: str | os.PathLike[str],
+) -> None:
+    """Connect the window's minimise/restore signals to lock + re-prompt, if enabled.
+
+    A no-op unless ``settings.lock_on_minimize`` is set. When enabled, minimising
+    the window locks the vault and clears the session (:func:`_lock_for_minimize`);
+    restoring it re-prompts and rebinds (:func:`_reprompt_and_rebind`), re-arming
+    the idle timer when one is present.
+    """
+    if not settings.lock_on_minimize:
+        return
+    window.lock_on_minimize_requested.connect(
+        lambda: _lock_for_minimize(window, session)
+    )
+    window.restore_requested.connect(
+        lambda: _reprompt_and_rebind(window, session, idle, settings, vault_path)
+    )
 
 
 def _shutdown(
