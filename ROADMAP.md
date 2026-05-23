@@ -32,9 +32,24 @@ See `CLAUDE.md` for the full design and architecture (strict `core/` logic vs `u
 
 ## Milestones
 
-_All milestones M1–M6 are complete — the roadmap is currently exhausted. Add a new
-milestone here to steer the next work; otherwise autodev falls to speculative
-fallback and, after a few idle sessions, emails for direction._
+### M7: Tag Management & Multi-Tag Filtering — `status: in progress`
+
+M1–M6 made core note-taking complete: create, edit, delete, organize, search, and
+import notes, plus assign / remove / filter-by tags. But the tag layer can only
+attach a tag to a note and filter by **one** tag — a tag itself cannot yet be
+**managed across the vault**. There is no way to fix a mistyped tag name everywhere
+it is used, or to remove a tag entirely, and the note list filters by a single tag
+at a time. These are the remaining completion gaps for tagging, named repeatedly in
+M6's closing lessons as the standing candidates once the roadmap ran dry.
+
+> Note: this milestone was proposed by autodev (the roadmap was exhausted after M6)
+> to surface the documented tag-management gaps rather than churn speculative
+> fallback work — the candidates were flagged in M6's lessons, not invented here.
+> Reorder or rescope freely; this file is the steering lever.
+
+- [ ] Rename a tag across the whole vault (right-click a tag in the sidebar -> Rename), so a mistyped or rebranded label updates everywhere it is used
+- [ ] Delete a tag from the whole vault, with a confirmation prompt (right-click a tag -> Delete), detaching it from every note that carried it
+- [ ] Filter the note list by multiple tags at once (AND semantics: show only notes carrying all selected tags)
 
 ---
 
