@@ -44,6 +44,7 @@ from core.notebooks import build_notebook_tree, would_create_cycle
 from core.text import derive_title
 from ui.autosave import AutoSaveController
 from ui.editor import MarkdownEditor
+from ui.import_wizard import ImportWizard
 from ui.quick_switcher import QuickSwitcher
 
 if TYPE_CHECKING:
@@ -168,6 +169,11 @@ class MainWindow(QMainWindow):
         self.quick_switch_shortcut = QShortcut(QKeySequence("Ctrl+P"), self)
         self.quick_switch_shortcut.activated.connect(self.open_quick_switcher)
 
+        # File menu: import notes from a legacy notes.db into the open vault.
+        file_menu = self.menuBar().addMenu("&File")
+        self.import_action = file_menu.addAction("Import legacy notes…")
+        self.import_action.triggered.connect(self.open_import_wizard)
+
         self.statusBar().showMessage("Ready")
 
     def bind_autosave(
@@ -251,6 +257,36 @@ class MainWindow(QMainWindow):
         if self.repository is None:
             return None
         return QuickSwitcher(self.repository.list_notes(), parent=self)
+
+    # -- legacy import -------------------------------------------------------
+
+    def open_import_wizard(self) -> None:
+        """Open the legacy-``notes.db`` import wizard and refresh on success.
+
+        Runs the modal :class:`~ui.import_wizard.ImportWizard`; if the user
+        completes an import (the wizard's :attr:`result` is set), the notebook
+        tree and note list are repopulated so the imported notebooks and notes
+        appear immediately. A no-op until a repository is bound (no vault open).
+        """
+        wizard = self._make_import_wizard()
+        if wizard is None:
+            return
+        if (
+            wizard.exec() == QDialog.DialogCode.Accepted
+            and wizard.result is not None
+        ):
+            self._populate_notebook_tree()
+            self.refresh_notes()
+
+    def _make_import_wizard(self) -> ImportWizard | None:
+        """Construct an import wizard over the vault, or ``None`` if no repository.
+
+        Separated from :meth:`open_import_wizard` so tests can drive the wizard
+        directly without the modal event loop (mirroring :meth:`_make_quick_switcher`).
+        """
+        if self.repository is None:
+            return None
+        return ImportWizard(self.repository, parent=self)
 
     # -- notebook tree -------------------------------------------------------
 
