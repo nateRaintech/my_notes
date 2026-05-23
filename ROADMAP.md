@@ -36,7 +36,7 @@ See `CLAUDE.md` for the full design and architecture (strict `core/` logic vs `u
 
 Usable at scale, and able to bring existing notes in.
 
-- [ ] Full-text search across all notes via FTS5, with a results list
+- [x] Full-text search across all notes via FTS5, with a results list _(done: `ui/main_window.py` middle pane is now a composite `note_pane` — `QLineEdit` `search_input` above the `note_list` — fed from the keyed `Repository`. `bind_autosave` stores `self.repository`; `refresh_notes()` populates the list (empty box → `list_notes()` newest-first, non-blank → `search_notes(query)`); rows label by title→`derive_title(body)` fallback and carry the `Note` in `UserRole`; `search_input.textChanged`→live refilter, `note_list.currentItemChanged`→`load_note`. `_populate_note_list` blocks signals during rebuild so refiltering never spuriously loads a note (loads only on explicit click). `app.py` calls `refresh_notes()` on launch. Builds on the `search_notes` engine (#31/#32) + keyed `Repository` from the unlock flow (#33/#34). 10 new behavioral tests against a real Repository; `core/` stays Qt-free. No "New note" authoring UI yet — fresh vault lists nothing until notes exist. — #35 / PR #36)_
 - [ ] Quick-switcher (Ctrl+P): jump to any note by fuzzy title match
 - [ ] Notebook management: create / rename / delete / nest notebooks and move notes between them
 - [ ] Import wizard: read a legacy `notes.db`, map `content`→body / `category`→notebook / timestamps, and write into the encrypted vault
