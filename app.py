@@ -58,6 +58,7 @@ def main() -> int:
     repository = Repository(vault.connection)
     window = MainWindow()
     window.bind_autosave(repository)
+    window.refresh_notes()  # populate the note list from the vault on launch
     # Flush any pending edit and lock the vault (wiping the key) on shutdown.
     app.aboutToQuit.connect(lambda: _shutdown(window, vault))
     window.show()

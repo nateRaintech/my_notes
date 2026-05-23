@@ -19,9 +19,11 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
+    QLineEdit,
     QListWidget,
     QSplitter,
     QTreeWidget,
+    QWidget,
 )
 
 from ui.editor import MarkdownEditor  # noqa: E402
@@ -47,11 +49,18 @@ def test_panes_are_typed_attributes_in_order(qapp):
     window = MainWindow()
     assert isinstance(window.notebook_tree, QTreeWidget)
     assert isinstance(window.note_list, QListWidget)
+    assert isinstance(window.search_input, QLineEdit)
     assert isinstance(window.editor, MarkdownEditor)
-    # Panes appear in the splitter left-to-right: tree, list, editor.
+    # Panes appear in the splitter left-to-right: tree, middle pane, editor. The
+    # middle pane is now a composite (search box above the note list) so the
+    # splitter still holds three logical panes.
     assert window.splitter.widget(0) is window.notebook_tree
-    assert window.splitter.widget(1) is window.note_list
+    assert window.splitter.widget(1) is window.note_pane
     assert window.splitter.widget(2) is window.editor
+    assert isinstance(window.note_pane, QWidget)
+    # The search box and note list both live inside the middle pane.
+    assert window.search_input.parent() is window.note_pane
+    assert window.note_list.parent() is window.note_pane
 
 
 def test_panes_cannot_collapse_to_zero(qapp):
@@ -71,5 +80,6 @@ def test_editor_pane_absorbs_resize(qapp):
     # (there is no stretchFactor getter on the splitter). Only the editor pane
     # stretches when the window widens.
     assert window.notebook_tree.sizePolicy().horizontalStretch() == 0
-    assert window.note_list.sizePolicy().horizontalStretch() == 0
+    # The middle splitter child is now the composite note pane (index 1).
+    assert window.note_pane.sizePolicy().horizontalStretch() == 0
     assert window.editor.sizePolicy().horizontalStretch() == 1
