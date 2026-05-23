@@ -143,6 +143,24 @@ def test_create_note_with_fields(repo):
     assert note.body == "hello world"
 
 
+def test_create_note_preserves_explicit_timestamps(repo):
+    # Importing a legacy note needs to keep its original timestamps rather than
+    # stamping "now" — create_note accepts them, and includes each only when given.
+    note = repo.create_note(
+        body="old note",
+        created_at="2019-05-04 12:00:00",
+        updated_at="2019-05-04 12:00:00",
+    )
+    assert note.created_at == "2019-05-04 12:00:00"
+    assert note.updated_at == "2019-05-04 12:00:00"
+
+
+def test_create_note_partial_timestamp_keeps_default_for_the_other(repo):
+    note = repo.create_note(body="x", created_at="2018-01-01 00:00:00")
+    assert note.created_at == "2018-01-01 00:00:00"
+    assert note.updated_at and note.updated_at != "2018-01-01 00:00:00"
+
+
 def test_get_note_roundtrip_and_missing(repo):
     note = repo.create_note(title="t", body="b")
     assert repo.get_note(note.id) == note
