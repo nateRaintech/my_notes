@@ -32,7 +32,15 @@ See `CLAUDE.md` for the full design and architecture (strict `core/` logic vs `u
 
 ## Milestones
 
-### M6: Note Authoring & Tags UI — `status: in progress`
+_All milestones M1–M6 are complete — the roadmap is currently exhausted. Add a new
+milestone here to steer the next work; otherwise autodev falls to speculative
+fallback and, after a few idle sessions, emails for direction._
+
+---
+
+## Completed milestones
+
+### M6: Note Authoring & Tags UI — `status: done` (completed 2026-05-23)
 
 The last core gaps after M1–M5. The app can list, search, organize, and **import**
 notes — but it cannot **author** them from the UI (a fresh vault is populated only
@@ -48,11 +56,7 @@ they are completion work, not new product direction.
 
 - [x] Create a new note from the UI (File menu + Ctrl+N) into the selected notebook, opened in the editor for immediate editing (auto-save persists it) _(done: `MainWindow.new_note() -> Note|None` + a File-menu "New Note" action carrying Ctrl+N (the shortcut deferred in keyboard-nav #51 until an authoring UI existed). Creates an empty note via `repository.create_note(notebook_id=self.current_notebook_id)` (root under All Notes), clears any active search with signals blocked (an empty note matches no query, so it'd otherwise be invisible), `refresh_notes()`, then `_select_note(id)` (new list helper: find the row by `note.id`, `setCurrentRow` → fires the existing `currentItemChanged → load_note` seam, the same path a user click uses) and `focus_editor()`. Empty note lists as "Untitled" (`derive_title("")`). `core/` untouched (uses existing `create_note`). 9 headless behavioral tests in `tests/test_new_note.py`; 394 passed (was 385). — #65 / PR #66)_
 - [x] Delete the selected note from the UI, with a confirmation prompt _(done: `MainWindow.delete_note(note_id) -> bool` deletes via the existing `Repository.delete_note` then `refresh_notes()`; returns `False` (no-op) when no repository is bound. Safety: when the deleted note is the one open in the editor (`autosave.saver.note_id == note_id`), it detaches auto-save (`saver.load(None)`) and clears the editor BEFORE the refresh — otherwise a later flush would `update_note` a now-deleted row (`NotFoundError`) and resurrect it, and stale plaintext would linger on screen. `_prompt_delete_note` adds a Yes/No `QMessageBox` confirmation ("This cannot be undone") and a right-click "Delete" action on the note list alongside "Move to notebook…". `core/` untouched (Qt-free). 9 headless behavioral tests in `tests/test_delete_note.py` (remove-from-vault+list, no-repo no-op, missing-note `False`, leaves-other-notes, open-note clears+detaches, dirty-open-note no-resurrect-on-flush, non-open-note editor-untouched, prompt confirm/cancel); 403 passed (was 394). — #67 / PR #68)_
-- [ ] Tag UI: assign / remove tags on the current note and filter the note list by tag (the `core/repository.py` tag layer from #29 already exists)
-
----
-
-## Completed milestones
+- [x] Tag UI: assign / remove tags on the current note and filter the note list by tag (the `core/repository.py` tag layer from #29 already exists) _(done in two slices: (1) #69 / PR #70 — per-note tag editor `ui/tag_editor.py` `TagEditorDialog` (assign = get-or-create by name then `add_tag_to_note`, idempotent; live-mutating, Close-only seam) + a note-list right-click "Tags…" action. (2) #71 / PR #72 — filter the note list by tag: `ui/main_window.py` grows a non-selectable "Tags" section in the left tree (a second `_KIND_ROLE` distinguishes notebook/tag/header rows that all store an int id in `UserRole`), a `current_tag_id` filter mutually exclusive with `current_notebook_id` (`select_tag`/`select_notebook` clear each other; "All Notes" clears both), `refresh_notes()` branching search(global) → tag → notebook, `new_note()` resetting to All Notes under a tag filter (a new untagged note would be hidden), `open_tag_editor()` repopulating the tree + list on close, and `lock_session()` resetting the tag filter. UI-only — `core/` stays Qt-free. 27 tests across the two slices (15 tag-editor + 12 tag-filter); 430 passed. — #69 / PR #70 + #71 / PR #72)_
 
 ### M5: Polish, Packaging & Docs — `status: done` (completed 2026-05-23)
 
