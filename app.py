@@ -15,30 +15,54 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import QApplication, QDialog
 
 from core.repository import Repository
+from core.settings import load_settings
 from core.vault import Vault
 from ui.main_window import MainWindow
 from ui.unlock_dialog import UnlockDialog
 
-# Environment override for the vault location, used by tests and power users.
-# A configurable vault path in the UI is an M5 (Settings) capability.
+if TYPE_CHECKING:
+    from core.settings import Settings
+
+# Environment override for the vault location, used by tests and power users. It
+# takes precedence over the location configured in Settings (see resolve_vault_path).
 VAULT_PATH_ENV = "MY_NOTES_VAULT"
 
 
-def default_vault_path() -> Path:
-    """Where the encrypted vault lives.
+def _builtin_default_vault_path() -> Path:
+    """The vault location with no overrides: ``~/.my_notes/notes.vault``."""
+    return Path.home() / ".my_notes" / "notes.vault"
 
-    Honours the ``MY_NOTES_VAULT`` environment variable if set (absolute or
-    relative path to the vault file); otherwise defaults to
+
+def default_vault_path() -> Path:
+    """The vault location honouring only the ``MY_NOTES_VAULT`` env override.
+
+    Returns the override if set, else the built-in default. ``app.main`` uses
+    :func:`resolve_vault_path`, which also considers the persisted settings; this
+    function remains for the env-or-default case.
+    """
+    override = os.environ.get(VAULT_PATH_ENV)
+    return Path(override) if override else _builtin_default_vault_path()
+
+
+def resolve_vault_path(settings: Settings) -> Path:
+    """Resolve the vault location with precedence: env > settings > built-in default.
+
+    The ``MY_NOTES_VAULT`` environment override always wins (tests and power
+    users); failing that, the user's configured
+    :attr:`~core.settings.Settings.vault_path`; failing that, the built-in
     ``~/.my_notes/notes.vault``.
     """
     override = os.environ.get(VAULT_PATH_ENV)
     if override:
         return Path(override)
-    return Path.home() / ".my_notes" / "notes.vault"
+    if settings.vault_path:
+        return Path(settings.vault_path)
+    return _builtin_default_vault_path()
 
 
 def main() -> int:
@@ -46,7 +70,8 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("my_notes")
 
-    vault_path = default_vault_path()
+    settings = load_settings()
+    vault_path = resolve_vault_path(settings)
     vault_path.parent.mkdir(parents=True, exist_ok=True)
 
     dialog = UnlockDialog(vault_path)
@@ -57,6 +82,7 @@ def main() -> int:
 
     repository = Repository(vault.connection)
     window = MainWindow()
+    window.configure_settings(settings)  # apply the saved theme; persist changes
     window.bind_autosave(repository)
     window.refresh_notes()  # populate the note list from the vault on launch
     # Flush any pending edit and lock the vault (wiping the key) on shutdown.

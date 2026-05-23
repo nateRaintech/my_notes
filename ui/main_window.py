@@ -19,6 +19,7 @@ must never import this module.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QPoint, Qt
@@ -42,15 +43,20 @@ from PySide6.QtWidgets import (
 
 from core.autosave import DEFAULT_DEBOUNCE_SECONDS
 from core.notebooks import build_notebook_tree, would_create_cycle
+from core.settings import DEFAULT_SETTINGS, save_settings
 from core.text import count_words, derive_title
 from core.theme import DEFAULT_THEME, load_stylesheet
 from ui.autosave import AutoSaveController
 from ui.editor import MarkdownEditor
 from ui.import_wizard import ImportWizard
 from ui.quick_switcher import QuickSwitcher
+from ui.settings_dialog import SettingsDialog
 
 if TYPE_CHECKING:
+    import os
+
     from core.repository import Note, Notebook, Repository
+    from core.settings import Settings
 
 WINDOW_TITLE = "my_notes"
 DEFAULT_SIZE = (1000, 700)
@@ -121,6 +127,14 @@ class MainWindow(QMainWindow):
         self.repository: Repository | None = None
         # The notebook the note list is filtered to; None = "All Notes".
         self.current_notebook_id: int | None = None
+
+        # Persisted settings. Until configure_settings() binds a real settings
+        # location (the M4/M5 launch flow does), the window runs on defaults and
+        # theme changes are NOT written to disk — so a bare MainWindow() in a
+        # unit test never touches the real settings file.
+        self.settings: Settings = DEFAULT_SETTINGS
+        self.settings_path: str | os.PathLike[str] | None = None
+        self._persist_settings = False
 
         self.notebook_tree = QTreeWidget()
         self.notebook_tree.setHeaderLabel("Notebooks")
@@ -196,10 +210,14 @@ class MainWindow(QMainWindow):
         self.focus_search_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
         self.focus_search_shortcut.activated.connect(self.focus_search)
 
-        # File menu: import notes from a legacy notes.db into the open vault.
+        # File menu: import notes from a legacy notes.db into the open vault, and
+        # open the Settings dialog.
         file_menu = self.menuBar().addMenu("&File")
         self.import_action = file_menu.addAction("Import legacy notes…")
         self.import_action.triggered.connect(self.open_import_wizard)
+        file_menu.addSeparator()
+        self.settings_action = file_menu.addAction("Settings…")
+        self.settings_action.triggered.connect(self.open_settings)
 
         # View menu: a checkable toggle between the dark theme (QSS) and the
         # native light look. Connected to triggered (the user activating it), not
@@ -284,7 +302,69 @@ class MainWindow(QMainWindow):
 
     def _on_toggle_dark_theme(self, checked: bool) -> None:
         """View-menu handler: switch to the dark theme, or back to light (native)."""
-        self.apply_theme("dark" if checked else "light")
+        name = "dark" if checked else "light"
+        self.apply_theme(name)
+        self._persist_theme(name)
+
+    def _persist_theme(self, name: str) -> None:
+        """Persist a theme chosen via the View menu, if persistence is enabled.
+
+        A bare :class:`MainWindow` (e.g. in a unit test) has not been bound to a
+        settings location via :meth:`configure_settings`, so a theme toggle is
+        applied in-memory but never written to disk — keeping tests off the real
+        settings file. The other settings fields are carried through unchanged.
+        """
+        if not self._persist_settings:
+            return
+        self.settings = replace(self.settings, theme=name)
+        save_settings(self.settings, self.settings_path)
+
+    # -- settings ------------------------------------------------------------
+
+    def configure_settings(
+        self,
+        settings: Settings,
+        *,
+        settings_path: str | os.PathLike[str] | None = None,
+    ) -> None:
+        """Bind persisted settings to the window (called by ``app.main`` at launch).
+
+        Records the current :attr:`settings` and where to persist changes
+        (:attr:`settings_path`; ``None`` = the default location), enables
+        persistence of subsequent theme changes, and applies the saved theme so a
+        freshly launched window reflects the user's last choice.
+        """
+        self.settings = settings
+        self.settings_path = settings_path
+        self._persist_settings = True
+        self.apply_theme(settings.theme)
+
+    def open_settings(self) -> None:
+        """Open the Settings dialog and apply the result to the live window.
+
+        Runs the modal :class:`~ui.settings_dialog.SettingsDialog` (which persists
+        on accept); if accepted, the chosen theme is applied immediately. The
+        vault-location change takes effect on next launch (``app.main`` reads it).
+        """
+        dialog = self._make_settings_dialog()
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._apply_settings_result(dialog.settings)
+
+    def _make_settings_dialog(self) -> SettingsDialog:
+        """Construct a Settings dialog over the current settings + persistence path.
+
+        Separated from :meth:`open_settings` so tests can drive the dialog directly
+        without the modal event loop (mirroring :meth:`_make_quick_switcher` /
+        :meth:`_make_import_wizard`).
+        """
+        return SettingsDialog(
+            self.settings, settings_path=self.settings_path, parent=self
+        )
+
+    def _apply_settings_result(self, settings: Settings) -> None:
+        """Adopt ``settings`` (already persisted by the dialog) and apply its theme."""
+        self.settings = settings
+        self.apply_theme(settings.theme)
 
     # -- keyboard-first navigation -------------------------------------------
 
