@@ -22,9 +22,10 @@ from PySide6.QtWidgets import (
     QListWidget,
     QMainWindow,
     QSplitter,
-    QTextEdit,
     QTreeWidget,
 )
+
+from ui.editor import MarkdownEditor
 
 WINDOW_TITLE = "my_notes"
 DEFAULT_SIZE = (1000, 700)
@@ -49,8 +50,8 @@ class MainWindow(QMainWindow):
 
     * :attr:`notebook_tree` — the notebooks/tags tree (left).
     * :attr:`note_list` — the note list for the selected scope (middle).
-    * :attr:`editor` — the editor pane (right); a placeholder until the Markdown
-      editor capability replaces it.
+    * :attr:`editor` — the Markdown editor pane (right): editable source beside a
+      live-rendered preview (see :class:`ui.editor.MarkdownEditor`).
 
     :attr:`splitter` is the central :class:`QSplitter` holding them.
     """
@@ -67,11 +68,8 @@ class MainWindow(QMainWindow):
         self.note_list = QListWidget()
         self.note_list.setMinimumWidth(_NOTE_LIST_MIN_WIDTH)
 
-        self.editor = QTextEdit()
+        self.editor = MarkdownEditor()
         self.editor.setMinimumWidth(_EDITOR_MIN_WIDTH)
-        self.editor.setPlaceholderText(
-            "Select a note, or create one, to start writing."
-        )
 
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.splitter.addWidget(self.notebook_tree)

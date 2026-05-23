@@ -21,10 +21,10 @@ from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
     QListWidget,
     QSplitter,
-    QTextEdit,
     QTreeWidget,
 )
 
+from ui.editor import MarkdownEditor  # noqa: E402
 from ui.main_window import PANE_DEFAULT_SIZES, MainWindow  # noqa: E402
 
 
@@ -47,7 +47,7 @@ def test_panes_are_typed_attributes_in_order(qapp):
     window = MainWindow()
     assert isinstance(window.notebook_tree, QTreeWidget)
     assert isinstance(window.note_list, QListWidget)
-    assert isinstance(window.editor, QTextEdit)
+    assert isinstance(window.editor, MarkdownEditor)
     # Panes appear in the splitter left-to-right: tree, list, editor.
     assert window.splitter.widget(0) is window.notebook_tree
     assert window.splitter.widget(1) is window.note_list
