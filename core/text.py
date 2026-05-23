@@ -1,8 +1,10 @@
 """Pure-Python text helpers for notes.
 
-Currently exposes :func:`derive_title`, which turns a note's Markdown body into
-a short display title for the note list (M3) and quick-switcher (M4). No Qt, no
-Markdown rendering — just enough text handling to label a note.
+Exposes :func:`derive_title`, which turns a note's Markdown body into a short
+display title for the note list (M3) and quick-switcher (M4), and
+:func:`count_words`, which counts the words in a note for the status-bar word
+count (M5). No Qt, no Markdown rendering — just enough text handling to label
+and measure a note.
 """
 
 from __future__ import annotations
@@ -44,3 +46,18 @@ def derive_title(markdown: str, *, max_length: int = 120, fallback: str = "Untit
         return title
 
     return fallback
+
+
+def count_words(text: str) -> int:
+    """Count the words in a note's text.
+
+    A *word* is a whitespace-separated token containing at least one
+    alphanumeric character. This means standalone Markdown punctuation — a lone
+    ``#`` heading marker, a ``-`` bullet, a ``---`` rule — is not counted, while
+    markup wrapped around a word (``**bold**``) still counts that word once.
+    Splitting is on any run of whitespace, so newlines and runs of spaces behave
+    like a single separator; empty or whitespace-only text has zero words.
+    """
+    return sum(
+        1 for token in text.split() if any(char.isalnum() for char in token)
+    )
