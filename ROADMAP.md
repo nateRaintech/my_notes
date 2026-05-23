@@ -40,7 +40,7 @@ Usable at scale, and able to bring existing notes in.
 - [ ] Quick-switcher (Ctrl+P): jump to any note by fuzzy title match
 - [ ] Notebook management: create / rename / delete / nest notebooks and move notes between them
 - [ ] Import wizard: read a legacy `notes.db`, map `content`→body / `category`→notebook / timestamps, and write into the encrypted vault
-- [ ] Startup flow: create-vault and unlock-vault dialogs wired into app launch
+- [x] Startup flow: create-vault and unlock-vault dialogs wired into app launch _(done: `ui/unlock_dialog.py` `UnlockDialog(QDialog)` — filesystem mode auto-detection (create iff neither the vault file nor its `.meta` sidecar exists, mirroring `Vault.create`'s no-clobber guard; stray `.meta` → unlock), create-mode password+confirm validation, unlock-mode `InvalidPassword`→inline error with retry (dialog stays open, no exception escapes); OK routes through a public `attempt() -> bool` not `accept()` so failures stay open and headless tests drive it without the modal loop. `app.py` shows the dialog at launch, builds `Repository(vault.connection)` → `MainWindow.bind_autosave` → `show()` on accept, exits rc 0 on cancel, and flushes auto-save + locks the vault on `aboutToQuit`; vault path `~/.my_notes/notes.vault`, overridable via `MY_NOTES_VAULT`. 10 headless Qt tests against a real Vault in `tmp_path`; `core/` stays Qt-free — #33 / PR #34)_
 
 ### M5: Polish, Packaging & Docs — `status: planned`
 
