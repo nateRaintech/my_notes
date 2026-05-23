@@ -68,6 +68,29 @@ This opens a 1000×700 window titled **my_notes** with a centered placeholder an
 status bar. That's the whole app at this stage — the 3-pane notebooks/notes/editor
 layout and the unlock flow arrive in later milestones (ROADMAP M3–M4).
 
+## Build a standalone Windows executable
+
+The app packages to a single-file Windows `.exe` with PyInstaller, driven by the
+checked-in [`my_notes.spec`](my_notes.spec). From the project root, with the deps
+installed:
+
+```powershell
+pyinstaller my_notes.spec
+```
+
+This produces **`dist/my_notes.exe`** — a one-file, windowed (no console) build of
+`app.py` that bundles the dark-theme stylesheet (`resources/dark.qss`). The
+SQLCipher driver and the Qt plugins are picked up by PyInstaller's bundled hooks
+automatically, so no `--hidden-import`/`--collect-binaries` flags are needed
+(confirmed by the SQLCipher-on-Windows spike in `spikes/sqlcipher_windows/`).
+
+`build/` and `dist/` are git-ignored — only the `.spec` is committed. Run the
+result by double-clicking it or from a shell:
+
+```powershell
+.\dist\my_notes.exe
+```
+
 ## Test & lint
 
 ```powershell
