@@ -228,9 +228,13 @@ class MainWindow(QMainWindow):
         self.focus_search_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
         self.focus_search_shortcut.activated.connect(self.focus_search)
 
-        # File menu: import notes from a legacy notes.db into the open vault, and
-        # open the Settings dialog.
+        # File menu: create a new note (Ctrl+N), import notes from a legacy
+        # notes.db into the open vault, and open the Settings dialog.
         file_menu = self.menuBar().addMenu("&File")
+        self.new_note_action = file_menu.addAction("&New Note")
+        self.new_note_action.setShortcut(QKeySequence("Ctrl+N"))
+        self.new_note_action.triggered.connect(self.new_note)
+        file_menu.addSeparator()
         self.import_action = file_menu.addAction("Import legacy notes…")
         self.import_action.triggered.connect(self.open_import_wizard)
         file_menu.addSeparator()
@@ -812,6 +816,46 @@ class MainWindow(QMainWindow):
         note = current.data(Qt.ItemDataRole.UserRole)
         if note is not None:
             self.load_note(note)
+
+    def new_note(self) -> Note | None:
+        """Create a new, empty note in the current view and open it for editing.
+
+        Creates the note in the notebook the list is currently filtered to
+        (:attr:`current_notebook_id`; the root when "All Notes" is selected),
+        clears any active search so the new (empty, unmatched) note is visible,
+        refreshes the list, then selects the note — loading it into the editor via
+        the usual selection seam — and moves focus to the editable source so the
+        user can start typing immediately. Debounced auto-save persists the edits
+        (there is no Save button). Returns the created note, or ``None`` if no
+        repository is bound (no vault open yet).
+
+        Driven by the File-menu "New Note" action / Ctrl+N, and callable directly
+        in tests.
+        """
+        if self.repository is None:
+            return None
+        note = self.repository.create_note(notebook_id=self.current_notebook_id)
+        # A new note has no title/body, so it would not match an active search;
+        # clear the query (without re-triggering it) so the note shows in the list.
+        self.search_input.blockSignals(True)
+        self.search_input.clear()
+        self.search_input.blockSignals(False)
+        self.refresh_notes()
+        self._select_note(note.id)
+        self.focus_editor()
+        return note
+
+    def _select_note(self, note_id: int) -> None:
+        """Select the list row carrying ``note_id``, loading it into the editor.
+
+        Setting the current row emits ``currentItemChanged`` → :meth:`load_note`,
+        the same path an explicit user click uses. A no-op if no row matches.
+        """
+        for i in range(self.note_list.count()):
+            note = self.note_list.item(i).data(Qt.ItemDataRole.UserRole)
+            if note is not None and note.id == note_id:
+                self.note_list.setCurrentRow(i)
+                return
 
     def move_note(self, note_id: int, notebook_id: int | None) -> Note | None:
         """Move a note into ``notebook_id`` (``None`` = the root) and refresh.
