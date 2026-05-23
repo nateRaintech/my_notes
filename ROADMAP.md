@@ -32,7 +32,23 @@ See `CLAUDE.md` for the full design and architecture (strict `core/` logic vs `u
 
 ## Milestones
 
-_All milestones (M1–M5) are complete. Add a new milestone here to queue the next unit of work; until then autodev falls back to speculative quality work (Priority 5B)._
+### M6: Note Authoring & Tags UI — `status: in progress`
+
+The last core gaps after M1–M5. The app can list, search, organize, and **import**
+notes — but it cannot **author** them from the UI (a fresh vault is populated only
+via the import wizard), and the `tags`/`note_tags` data layer (built + tested in
+`core/repository.py`, #29) has **no UI at all**. These were flagged repeatedly
+during M4/M5 and documented as the two honest gaps in the README (#63). Closing
+them makes core note-taking complete end to end — squarely CLAUDE.md's goal — so
+they are completion work, not new product direction.
+
+> Note: this milestone was proposed by autodev (roadmap exhausted after M5) to
+> surface the documented gaps rather than churn speculative fallback work. Reorder
+> or rescope freely — this file is the steering lever.
+
+- [ ] Create a new note from the UI (File menu + Ctrl+N) into the selected notebook, opened in the editor for immediate editing (auto-save persists it)
+- [ ] Delete the selected note from the UI, with a confirmation prompt
+- [ ] Tag UI: assign / remove tags on the current note and filter the note list by tag (the `core/repository.py` tag layer from #29 already exists)
 
 ---
 
