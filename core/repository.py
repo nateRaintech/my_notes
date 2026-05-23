@@ -22,13 +22,14 @@ What this layer relies on the connection providing
 
 Writes touch ``notes`` / ``notebooks`` only — the schema's ``notes_ai`` /
 ``notes_ad`` / ``notes_au`` triggers keep the ``notes_fts`` full-text index in
-sync automatically, so this layer never writes to it directly. (Search *queries*
-over that index are M4; this layer just must not break the triggers.)
+sync automatically, so this layer never writes to it directly. Full-text search
+*reads* that index through :meth:`Repository.search_notes`.
 
 Scope: CRUD for notes, notebooks, and tags — including assigning/removing tags on
-a note and filtering the note list by tag. Full-text search *queries* (M4) and
-Markdown title derivation (:func:`core.text.derive_title`) are deliberately
-elsewhere — the repository stores whatever ``title`` / ``body`` it is given.
+a note, filtering the note list by tag, and full-text search over notes
+(:meth:`Repository.search_notes`). Markdown title derivation
+(:func:`core.text.derive_title`) is deliberately elsewhere — the repository
+stores whatever ``title`` / ``body`` it is given.
 """
 
 from __future__ import annotations
@@ -114,11 +115,33 @@ _NOTEBOOK_COLUMNS = "id, name, parent_id, created_at, updated_at"
 _NOTE_COLUMNS = "id, notebook_id, title, body, created_at, updated_at"
 _TAG_COLUMNS = "id, name"
 
-# The same note columns, table-qualified — used by list_notes, which may JOIN
-# note_tags for tag filtering and so must disambiguate (and order by) notes.* .
+# The same note columns, table-qualified — used by list_notes and search_notes,
+# which JOIN another table (note_tags / notes_fts) and so must disambiguate
+# (and order by) notes.* .
 _NOTE_COLUMNS_QUALIFIED = ", ".join(
     f"notes.{col.strip()}" for col in _NOTE_COLUMNS.split(",")
 )
+
+
+def _fts_match_expr(query: str) -> str | None:
+    """Turn free-text search input into a safe FTS5 ``MATCH`` expression.
+
+    A search box hands us arbitrary text, but FTS5 ``MATCH`` parses its argument
+    as a *query language* — bare metacharacters (``"`` ``*`` ``:`` ``^`` ``-``
+    ``(`` ``)``) and the ``AND`` / ``OR`` / ``NOT`` keywords would either change
+    the meaning or raise ``sqlcipher3.OperationalError`` (fts5: syntax error). So
+    each whitespace-separated token is wrapped as a quoted FTS5 *string* term
+    (any embedded ``"`` doubled, per FTS5's escaping rule) and the terms are
+    joined by spaces. FTS5 implicitly ANDs space-separated terms, giving intuitive
+    "every word must appear" semantics, and the quoting makes every token match
+    literally instead of being interpreted as syntax.
+
+    Returns ``None`` for empty / whitespace-only input, signalling "no search".
+    """
+    tokens = query.split()
+    if not tokens:
+        return None
+    return " ".join('"' + token.replace('"', '""') + '"' for token in tokens)
 
 
 class Repository:
@@ -424,3 +447,39 @@ class Repository:
             (note_id,),
         ).fetchall()
         return [Tag(*row) for row in rows]
+
+    # -- full-text search ----------------------------------------------------
+
+    def search_notes(self, query: str, *, limit: int | None = None) -> list[Note]:
+        """Full-text search across **all** notes, best matches first.
+
+        Runs an FTS5 ``MATCH`` over the ``notes_fts`` index (which covers each
+        note's ``title`` and ``body``) and returns the matching notes as
+        :class:`Note` objects, ordered by relevance (FTS5's bm25 ``rank``, best
+        first). The index is kept current by the schema's triggers, so results
+        always reflect the latest committed edits.
+
+        ``query`` is free text from a search box: it is treated as literal terms
+        (see :func:`_fts_match_expr`), so FTS5 metacharacters never raise and a
+        multi-word query requires every word to appear (implicit AND). An empty or
+        whitespace-only query returns ``[]`` without touching the database.
+        ``limit``, if given, caps the number of results returned.
+
+        Read-only — writes nothing.
+        """
+        match = _fts_match_expr(query)
+        if match is None:
+            return []
+
+        sql = (
+            f"SELECT {_NOTE_COLUMNS_QUALIFIED} FROM notes_fts "
+            "JOIN notes ON notes.id = notes_fts.rowid "
+            "WHERE notes_fts MATCH ? ORDER BY notes_fts.rank"
+        )
+        params: list[Any] = [match]
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+
+        rows = self._conn.execute(sql, params).fetchall()
+        return [Note(*row) for row in rows]

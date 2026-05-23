@@ -382,6 +382,107 @@ def test_list_notes_unfiltered_unaffected_by_tags(repo):
     assert [n.id for n in repo.list_notes()] == [b.id, a.id]
 
 
+# -- full-text search -------------------------------------------------------
+
+
+def test_search_notes_matches_body_and_returns_note_objects(repo):
+    target = repo.create_note(title="Recipe", body="how to bake sourdough bread")
+    repo.create_note(title="Other", body="completely unrelated text")
+    results = repo.search_notes("sourdough")
+    assert [n.id for n in results] == [target.id]
+    assert isinstance(results[0], Note)
+    assert results[0].title == "Recipe"
+    assert results[0].body == "how to bake sourdough bread"
+
+
+def test_search_notes_matches_title(repo):
+    target = repo.create_note(title="Quarterly Budget", body="numbers here")
+    repo.create_note(title="Vacation", body="beach plans")
+    assert [n.id for n in repo.search_notes("budget")] == [target.id]
+
+
+def test_search_notes_spans_all_notebooks_and_root(repo):
+    work = repo.create_notebook("Work")
+    home = repo.create_notebook("Home")
+    a = repo.create_note(notebook_id=work.id, title="A", body="shared keyword alpha")
+    b = repo.create_note(notebook_id=home.id, title="B", body="shared keyword beta")
+    c = repo.create_note(title="C", body="shared keyword gamma")  # root note
+    found = {n.id for n in repo.search_notes("shared")}
+    assert found == {a.id, b.id, c.id}
+
+
+@pytest.mark.parametrize("query", ["", "   ", "\t\n"])
+def test_search_notes_empty_query_returns_empty(repo, query):
+    repo.create_note(title="Note", body="some content")
+    assert repo.search_notes(query) == []
+
+
+def test_search_notes_no_match_returns_empty(repo):
+    repo.create_note(title="Note", body="apples and oranges")
+    assert repo.search_notes("bananas") == []
+
+
+def test_search_notes_multi_word_requires_all_terms(repo):
+    both = repo.create_note(title="Both", body="alpha and beta together")
+    repo.create_note(title="One", body="only alpha here")
+    # Implicit AND: only the note containing every word matches.
+    assert [n.id for n in repo.search_notes("alpha beta")] == [both.id]
+
+
+def test_search_notes_ranks_more_relevant_first(repo):
+    low = repo.create_note(
+        title="Misc",
+        body="a long note that happens to mention python once amid many words",
+    )
+    high = repo.create_note(title="Python", body="python python python tutorial")
+    # The note with the term in its title and repeated in a short body is the
+    # stronger bm25 match, so it sorts ahead of the incidental mention.
+    assert [n.id for n in repo.search_notes("python")] == [high.id, low.id]
+
+
+@pytest.mark.parametrize(
+    "query",
+    ['"', "*", "AND", "OR", "NOT", "-foo", "foo:", "(unbalanced", "NEAR(a b)", '""'],
+)
+def test_search_notes_metacharacters_do_not_raise(repo, query):
+    repo.create_note(title="Note", body="ordinary content")
+    # Arbitrary search-box input must be treated as literal terms, never as FTS5
+    # query syntax — so none of these raise sqlcipher3.OperationalError.
+    assert isinstance(repo.search_notes(query), list)
+
+
+def test_search_notes_treats_operator_keyword_as_literal(repo):
+    # Unquoted, MATCH 'OR' is a syntax error; quoted, it matches the literal
+    # token "or" (tokenization is case-insensitive).
+    target = repo.create_note(title="Mix", body="salt or pepper")
+    repo.create_note(title="Plain", body="just salt")
+    assert [n.id for n in repo.search_notes("OR")] == [target.id]
+
+
+def test_search_notes_limit_caps_results(repo):
+    for i in range(3):
+        repo.create_note(title=f"N{i}", body="recurring keyword")
+    assert len(repo.search_notes("recurring")) == 3
+    assert len(repo.search_notes("recurring", limit=2)) == 2
+
+
+def test_search_notes_reflects_edits_via_triggers(repo):
+    note = repo.create_note(title="Draft", body="this is a draft")
+    assert [n.id for n in repo.search_notes("draft")] == [note.id]
+
+    repo.update_note(note.id, title="Final", body="this is the final version")
+    # The FTS triggers re-index on update, so search sees the change immediately.
+    assert repo.search_notes("draft") == []
+    assert [n.id for n in repo.search_notes("final")] == [note.id]
+
+
+def test_search_notes_reflects_deletes_via_triggers(repo):
+    note = repo.create_note(title="Temp", body="ephemeral entry")
+    assert [n.id for n in repo.search_notes("ephemeral")] == [note.id]
+    repo.delete_note(note.id)
+    assert repo.search_notes("ephemeral") == []
+
+
 # -- vault integration: persists encrypted across a lock/unlock cycle --------
 
 
