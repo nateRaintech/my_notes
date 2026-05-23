@@ -38,7 +38,7 @@ The core note-taking experience, end to end for the happy path.
 
 - [x] `core/repository.py`: create / read / update / delete notes and notebooks through the encrypted vault, with tests _(done: typed CRUD layer over a DB-API connection — frozen `Note`/`Notebook` value objects, `_UNSET` partial-update sentinel, FK cascade/SET NULL, writes-to-notes/notebooks-only with FTS kept in sync by schema triggers, 24 tests incl. a vault round-trip — #21 / PR #22)_
 - [x] Main window: resizable 3-pane layout (notebooks/tags tree | note list | editor) via `QSplitter` _(done: horizontal `QSplitter` (`self.splitter`) holding three typed, non-collapsible panes — `notebook_tree`/`note_list`/`editor` — that later M3/M4 capabilities populate rather than rebuild; default sizes (220,300,480) favor the editor, only the editor stretches on resize; shell-only, no data binding yet — #23 / PR #24)_
-- [ ] Markdown editor with live preview (editable source + `QTextDocument.setMarkdown()` preview pane)
+- [x] Markdown editor with live preview (editable source + `QTextDocument.setMarkdown()` preview pane) _(done: `ui/editor.py` `MarkdownEditor(QWidget)` — editable `QPlainTextEdit` source beside a read-only `QTextEdit` preview in a non-collapsible `QSplitter`; live `textChanged`→`setMarkdown()` re-render (no Save button); `set_markdown`/`markdown()` seams; replaced the placeholder `editor` in `MainWindow`; 9 headless Qt tests; `core/` stays Qt-free — #25 / PR #26)_
 - [ ] Auto-save: edits persist (debounced) without an explicit Save button
 - [ ] Tags: assign/remove tags on a note and filter the note list by tag
 
