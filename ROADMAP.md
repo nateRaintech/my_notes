@@ -32,16 +32,6 @@ See `CLAUDE.md` for the full design and architecture (strict `core/` logic vs `u
 
 ## Milestones
 
-### M3: Notes CRUD + Markdown Editor — `status: planned`
-
-The core note-taking experience, end to end for the happy path.
-
-- [x] `core/repository.py`: create / read / update / delete notes and notebooks through the encrypted vault, with tests _(done: typed CRUD layer over a DB-API connection — frozen `Note`/`Notebook` value objects, `_UNSET` partial-update sentinel, FK cascade/SET NULL, writes-to-notes/notebooks-only with FTS kept in sync by schema triggers, 24 tests incl. a vault round-trip — #21 / PR #22)_
-- [x] Main window: resizable 3-pane layout (notebooks/tags tree | note list | editor) via `QSplitter` _(done: horizontal `QSplitter` (`self.splitter`) holding three typed, non-collapsible panes — `notebook_tree`/`note_list`/`editor` — that later M3/M4 capabilities populate rather than rebuild; default sizes (220,300,480) favor the editor, only the editor stretches on resize; shell-only, no data binding yet — #23 / PR #24)_
-- [x] Markdown editor with live preview (editable source + `QTextDocument.setMarkdown()` preview pane) _(done: `ui/editor.py` `MarkdownEditor(QWidget)` — editable `QPlainTextEdit` source beside a read-only `QTextEdit` preview in a non-collapsible `QSplitter`; live `textChanged`→`setMarkdown()` re-render (no Save button); `set_markdown`/`markdown()` seams; replaced the placeholder `editor` in `MainWindow`; 9 headless Qt tests; `core/` stays Qt-free — #25 / PR #26)_
-- [x] Auto-save: edits persist (debounced) without an explicit Save button _(done: split across two modules mirroring the vault auto-lock pattern — pure-Python `core/autosave.py` `AutoSaver` debounce/persist policy (injectable clock, dirty-only-on-change, body verbatim + title re-derived via `core.text.derive_title`) driven by `ui/autosave.py` `AutoSaveController` (`source.textChanged`→`edit`, 200ms `QTimer`→`flush_if_due`; binds saver before `set_markdown` so load doesn't spuriously save); `MainWindow.bind_autosave`/`load_note` seams inert until the M4 keyed repository; 22 tests; `core/` stays Qt-free — #27 / PR #28)_
-- [ ] Tags: assign/remove tags on a note and filter the note list by tag
-
 ### M4: Search, Organization & Import — `status: planned`
 
 Usable at scale, and able to bring existing notes in.
@@ -62,6 +52,16 @@ Usable at scale, and able to bring existing notes in.
 ---
 
 ## Completed milestones
+
+### M3: Notes CRUD + Markdown Editor — `status: done` (completed 2026-05-22)
+
+The core note-taking experience, end to end for the happy path.
+
+- [x] `core/repository.py`: create / read / update / delete notes and notebooks through the encrypted vault, with tests _(done: typed CRUD layer over a DB-API connection — frozen `Note`/`Notebook` value objects, `_UNSET` partial-update sentinel, FK cascade/SET NULL, writes-to-notes/notebooks-only with FTS kept in sync by schema triggers, 24 tests incl. a vault round-trip — #21 / PR #22)_
+- [x] Main window: resizable 3-pane layout (notebooks/tags tree | note list | editor) via `QSplitter` _(done: horizontal `QSplitter` (`self.splitter`) holding three typed, non-collapsible panes — `notebook_tree`/`note_list`/`editor` — that later M3/M4 capabilities populate rather than rebuild; default sizes (220,300,480) favor the editor, only the editor stretches on resize; shell-only, no data binding yet — #23 / PR #24)_
+- [x] Markdown editor with live preview (editable source + `QTextDocument.setMarkdown()` preview pane) _(done: `ui/editor.py` `MarkdownEditor(QWidget)` — editable `QPlainTextEdit` source beside a read-only `QTextEdit` preview in a non-collapsible `QSplitter`; live `textChanged`→`setMarkdown()` re-render (no Save button); `set_markdown`/`markdown()` seams; replaced the placeholder `editor` in `MainWindow`; 9 headless Qt tests; `core/` stays Qt-free — #25 / PR #26)_
+- [x] Auto-save: edits persist (debounced) without an explicit Save button _(done: split across two modules mirroring the vault auto-lock pattern — pure-Python `core/autosave.py` `AutoSaver` debounce/persist policy (injectable clock, dirty-only-on-change, body verbatim + title re-derived via `core.text.derive_title`) driven by `ui/autosave.py` `AutoSaveController` (`source.textChanged`→`edit`, 200ms `QTimer`→`flush_if_due`; binds saver before `set_markdown` so load doesn't spuriously save); `MainWindow.bind_autosave`/`load_note` seams inert until the M4 keyed repository; 22 tests; `core/` stays Qt-free — #27 / PR #28)_
+- [x] Tags: assign/remove tags on a note and filter the note list by tag _(done: tag data-access layer in `core/repository.py` over the schema's existing `tags`/`note_tags` tables — frozen `Tag(id, name)` value object (no timestamps); tag CRUD mirroring notebooks (`create_tag`→`IntegrityError` on duplicate name, `get_tag`/`get_tag_by_name`/`list_tags` name COLLATE NOCASE/id, `delete_tag -> bool` with note_tags cascade); note↔tag association (`add_tag_to_note` idempotent via `INSERT OR IGNORE`, `remove_tag_from_note -> bool`, `tags_for_note` ordered by name); `list_notes` refactored into a dynamic WHERE builder so `notebook_id` + a new `tag_id` filter AND together (JOIN `note_tags`, columns table-qualified); 17 new behavioral tests; tag UI deferred to M4; `core/` stays Qt-free — #29 / PR #30)_
 
 ### M2: Encrypted Vault Core — `status: done` (completed 2026-05-22)
 
