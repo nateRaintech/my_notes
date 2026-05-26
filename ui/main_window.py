@@ -141,6 +141,12 @@ class MainWindow(QMainWindow):
         self.current_notebook_id: int | None = None
         self.current_tag_id: int | None = None
         self._minimize_locked = False
+        # Strong references to in-flight AI (worker, thread) pairs. A worker moved
+        # to a QThread has no parent (you can't parent across threads), so without
+        # holding it here it is garbage-collected the instant the launching method
+        # returns — before `thread.started -> worker.run` ever fires (issue #85).
+        # Pairs are discarded on thread.finished (see _make_ai_worker).
+        self._ai_jobs: set = set()
 
         # Persisted settings. Until configure_settings() binds a real settings
         # location the window runs on defaults and nothing is written to disk.
@@ -1198,6 +1204,13 @@ class MainWindow(QMainWindow):
         thread = QThread(self)
         worker = AiWorker(api_key, messages, timeout=timeout)
         worker.moveToThread(thread)
-        # Clean up the thread when it finishes.
+        # Keep a strong reference to the (worker, thread) pair so neither is
+        # garbage-collected mid-flight. The thread is parented to the window, but
+        # the worker has no parent (moveToThread forbids one), so without this it
+        # would be collected the moment the caller returns and `worker.run` would
+        # never fire (issue #85). Release the pair once the thread finishes.
+        job = (worker, thread)
+        self._ai_jobs.add(job)
+        thread.finished.connect(lambda: self._ai_jobs.discard(job))
         thread.finished.connect(thread.deleteLater)
         return worker, thread
