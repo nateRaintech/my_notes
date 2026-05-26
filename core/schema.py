@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 
 # Bump this when appending a migration below. Always equals the highest
 # migration version, i.e. the schema a freshly created vault ends up at.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Migration 1 — the initial schema.
 #   notebooks  nest via a self-referential parent_id (deleting a notebook removes
@@ -105,12 +105,27 @@ CREATE TRIGGER notes_au AFTER UPDATE ON notes BEGIN
 END;
 """
 
+# Migration 2 — encrypted key-value secret store.
+#   app_secrets  holds small named secrets (e.g. the AI API key). A single row
+#                per name; INSERT OR REPLACE is the upsert idiom. Protected at
+#                rest because the whole SQLCipher database is encrypted; the
+#                value is stored verbatim and never exposed to the UI.
+#                CREATE TABLE IF NOT EXISTS makes this idempotent and safe for
+#                existing vaults that are opened against this schema version.
+_MIGRATION_2 = """
+CREATE TABLE IF NOT EXISTS app_secrets (
+    name   TEXT PRIMARY KEY,
+    value  TEXT NOT NULL
+);
+"""
+
 # Forward-only, ordered (version, DDL) migrations. Append new ones and bump
 # SCHEMA_VERSION; never edit or reorder a shipped migration — vaults in the field
 # have already applied it, and migrations only ever run *forward* from the
 # version a database is currently at.
 _MIGRATIONS: tuple[tuple[int, str], ...] = (
     (1, _MIGRATION_1),
+    (2, _MIGRATION_2),
 )
 
 

@@ -22,7 +22,7 @@ import base64
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QByteArray, QEvent, QPoint, Qt, QTimer, Signal
+from PySide6.QtCore import QByteArray, QEvent, QPoint, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QDialog,
@@ -46,6 +46,8 @@ from core.notebooks import build_notebook_tree, would_create_cycle
 from core.settings import DEFAULT_SETTINGS, save_settings
 from core.text import count_words, derive_title
 from core.theme import DEFAULT_THEME, load_stylesheet
+from ui.ai_worker import AiWorker
+from ui.api_key_dialog import APIKeyDialog
 from ui.autosave import AutoSaveController
 from ui.editor import MarkdownEditor
 from ui.import_wizard import ImportWizard
@@ -280,6 +282,13 @@ class MainWindow(QMainWindow):
         self.focus_mode_action.triggered.connect(
             lambda checked: self.set_focus_mode(checked)
         )
+
+        # AI menu — items are disabled when the vault is locked (no repository).
+        self._ai_menu = self.menuBar().addMenu("&AI")
+        self.set_api_key_action = self._ai_menu.addAction("Set API key…")
+        self.set_api_key_action.triggered.connect(self.open_api_key_dialog)
+        self.test_connection_action = self._ai_menu.addAction("Test connection")
+        self.test_connection_action.triggered.connect(self.open_test_connection)
 
         # --- Status bar ------------------------------------------------------
 
@@ -930,3 +939,81 @@ class MainWindow(QMainWindow):
         )
         if reply == QMessageBox.StandardButton.Yes:
             self.delete_note(note.id)
+
+    # -------------------------------------------------------------------------
+    # AI menu
+    # -------------------------------------------------------------------------
+
+    def open_api_key_dialog(self) -> None:
+        """Open the API-key dialog; no-op when the vault is locked."""
+        dialog = self._make_api_key_dialog()
+        if dialog is None:
+            self.statusBar().showMessage("Vault is locked — unlock first.")
+            return
+        dialog.exec()
+
+    def _make_api_key_dialog(self) -> "APIKeyDialog | None":
+        """Return a new APIKeyDialog, or None if the vault is locked.
+
+        Test seam: call this instead of open_api_key_dialog to get the
+        dialog object without running the modal event loop.
+        """
+        if self.repository is None:
+            return None
+        return APIKeyDialog(self.repository, parent=self)
+
+    def open_test_connection(self) -> None:
+        """Test the stored API key on a background thread; show result in a message box."""
+        if self.repository is None:
+            self.statusBar().showMessage("Vault is locked — unlock first.")
+            return
+        if not self.repository.has_api_key():
+            QMessageBox.warning(self, "AI", "No API key stored. Set one via AI → Set API key…")
+            return
+        api_key = self.repository.get_api_key()
+        assert api_key is not None  # guarded by has_api_key() above
+        worker, thread = self._make_ai_worker(
+            api_key, [{"role": "user", "content": "Reply with OK"}]
+        )
+        self.statusBar().showMessage("Testing connection…")
+        self.test_connection_action.setEnabled(False)
+
+        def _on_finished(reply: str) -> None:
+            self.statusBar().showMessage("Connection OK")
+            self.test_connection_action.setEnabled(True)
+            QMessageBox.information(self, "AI connection", f"Connection successful.\nReply: {reply}")
+            thread.quit()
+
+        def _on_error(message: str) -> None:
+            self.statusBar().showMessage("Connection failed")
+            self.test_connection_action.setEnabled(True)
+            QMessageBox.warning(self, "AI connection", f"Connection failed:\n{message}")
+            thread.quit()
+
+        worker.finished.connect(_on_finished)
+        worker.error.connect(_on_error)
+        thread.started.connect(worker.run)
+        thread.start()
+
+    def _make_ai_worker(
+        self,
+        api_key: str,
+        messages: list[dict],
+        *,
+        timeout: float = 120.0,
+    ) -> "tuple[AiWorker, QThread]":
+        """Create and wire an AiWorker on a new thread.
+
+        Test seam: call this to get the worker and thread objects without
+        triggering a real network call; monkeypatch worker.run or call
+        worker.run_with(mock_fn) directly.
+
+        Returns (worker, thread) — the worker has been moved to the thread
+        but the thread has NOT been started yet.
+        """
+        thread = QThread(self)
+        worker = AiWorker(api_key, messages, timeout=timeout)
+        worker.moveToThread(thread)
+        # Clean up the thread when it finishes.
+        thread.finished.connect(thread.deleteLater)
+        return worker, thread
