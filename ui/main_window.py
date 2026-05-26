@@ -46,6 +46,7 @@ from core.notebooks import build_notebook_tree, would_create_cycle
 from core.settings import DEFAULT_SETTINGS, save_settings
 from core.text import count_words, derive_title
 from core.theme import DEFAULT_THEME, load_stylesheet
+from ui.ai_chat import AiChatPanel
 from ui.ai_worker import AiWorker
 from ui.api_key_dialog import APIKeyDialog
 from ui.autosave import AutoSaveController
@@ -212,6 +213,15 @@ class MainWindow(QMainWindow):
         self.dock_preview.setWidget(self.editor.preview)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock_preview)
 
+        # AI Chat dock (right, hidden by default).
+        self.ai_chat_panel = AiChatPanel()
+        self.dock_ai_chat = QDockWidget("AI Chat", self)
+        self.dock_ai_chat.setObjectName("dock_ai_chat")
+        self.dock_ai_chat.setFeatures(_dock_features)
+        self.dock_ai_chat.setWidget(self.ai_chat_panel)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock_ai_chat)
+        self.dock_ai_chat.hide()
+
         # --- Signals ---------------------------------------------------------
 
         self.search_input.textChanged.connect(self._on_search_changed)
@@ -275,6 +285,11 @@ class MainWindow(QMainWindow):
         self.toggle_preview_action.setShortcut(QKeySequence("Ctrl+Shift+4"))
         view_menu.addAction(self.toggle_preview_action)
 
+        # AI Chat dock toggle — Ctrl+Shift+5.
+        self.toggle_ai_chat_action = self.dock_ai_chat.toggleViewAction()
+        self.toggle_ai_chat_action.setShortcut(QKeySequence("Ctrl+Shift+5"))
+        view_menu.addAction(self.toggle_ai_chat_action)
+
         view_menu.addSeparator()
         self.focus_mode_action = view_menu.addAction("Focus mode")
         self.focus_mode_action.setCheckable(True)
@@ -289,6 +304,8 @@ class MainWindow(QMainWindow):
         self.set_api_key_action.triggered.connect(self.open_api_key_dialog)
         self.test_connection_action = self._ai_menu.addAction("Test connection")
         self.test_connection_action.triggered.connect(self.open_test_connection)
+        self.chat_action = self._ai_menu.addAction("Chat")
+        self.chat_action.triggered.connect(self.open_ai_chat)
 
         # --- Status bar ------------------------------------------------------
 
@@ -994,6 +1011,80 @@ class MainWindow(QMainWindow):
         worker.error.connect(_on_error)
         thread.started.connect(worker.run)
         thread.start()
+
+    def open_ai_chat(self) -> None:
+        """Show and raise the AI Chat dock, then focus its input field.
+
+        Wires the run-chat and save-note seams into the panel on first call
+        (idempotent: the panel checks for None seams itself).
+        """
+        self._wire_ai_chat_seams()
+        self.dock_ai_chat.show()
+        self.dock_ai_chat.raise_()
+        self.ai_chat_panel.input_edit.setFocus()
+
+    def _wire_ai_chat_seams(self) -> None:
+        """Inject run-chat and save-note callbacks into the panel.
+
+        Called lazily from :meth:`open_ai_chat` so the panel is testable
+        without a live repository.  Seams are replaced on every call; because
+        they close over ``self``, they always see the latest repository state.
+        """
+        self.ai_chat_panel.run_chat_fn = self._send_chat
+        self.ai_chat_panel.save_note_fn = self._save_chat_note
+
+    def _send_chat(self, messages: list[dict]) -> None:
+        """Run-chat seam: spin an AiWorker for the chat panel.
+
+        Guards for a locked vault (``self.repository is None``) and a missing
+        API key, showing appropriate status messages instead of crashing.
+        """
+        if self.repository is None:
+            self.ai_chat_panel.status_label.setText(
+                "Vault is locked — unlock the vault first."
+            )
+            self.ai_chat_panel._set_thinking(False)
+            return
+        if not self.repository.has_api_key():
+            self.ai_chat_panel.status_label.setText(
+                "No API key stored. Set one via AI → Set API key…"
+            )
+            self.ai_chat_panel._set_thinking(False)
+            return
+
+        api_key = self.repository.get_api_key()
+        assert api_key is not None  # guarded by has_api_key() above
+
+        worker, thread = self._make_ai_worker(api_key, messages)
+
+        def _on_finished(reply: str) -> None:
+            self.ai_chat_panel._on_reply(reply)
+            thread.quit()
+
+        def _on_error(message: str) -> None:
+            self.ai_chat_panel._on_error(message)
+            thread.quit()
+
+        worker.finished.connect(_on_finished)
+        worker.error.connect(_on_error)
+        thread.started.connect(worker.run)
+        thread.start()
+
+    def _save_chat_note(self, markdown: str) -> None:
+        """Save-note seam: create a note from the conversation Markdown.
+
+        Guards for a locked vault; shows a status-bar confirmation on success.
+        """
+        if self.repository is None:
+            self.statusBar().showMessage("Vault is locked — unlock first.")
+            return
+        self.repository.create_note(
+            notebook_id=self.current_notebook_id,
+            title="AI Chat",
+            body=markdown,
+        )
+        self.refresh_notes()
+        self.statusBar().showMessage("Chat saved as note.")
 
     def _make_ai_worker(
         self,
