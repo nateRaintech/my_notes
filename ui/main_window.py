@@ -56,7 +56,7 @@ from ui.tag_editor import TagEditorDialog
 if TYPE_CHECKING:
     import os
 
-    from core.repository import Note, Notebook, Repository
+    from core.repository import Note, Notebook, Repository, Tag
     from core.settings import Settings
 
 WINDOW_TITLE = "my_notes"
@@ -769,6 +769,30 @@ class MainWindow(QMainWindow):
         self._populate_notebook_tree()
         return notebook
 
+    def rename_tag(self, tag_id: int, new_name: str) -> Tag | None:
+        """Rename a tag across the whole vault and refresh the tree + note list.
+
+        The new name takes effect on every note carrying the tag (the repository
+        renames it in place). Returns the updated :class:`~core.repository.Tag`, or
+        ``None`` (a no-op) when no repository is bound or when ``new_name`` already
+        belongs to a *different* tag — tag names are unique, so renaming onto an
+        existing name is refused here rather than surfacing the database's
+        ``IntegrityError`` (merging two tags is out of scope). Renaming a tag to its
+        own current name is allowed (a harmless no-op rename). After a rename the
+        tree is repopulated so the row's label updates, and the note list refreshed
+        so a tag-filtered view reflects the new name. Driven by the right-click
+        "Rename…" action on a tag row and callable directly in tests.
+        """
+        if self.repository is None:
+            return None
+        existing = self.repository.get_tag_by_name(new_name)
+        if existing is not None and existing.id != tag_id:
+            return None
+        tag = self.repository.rename_tag(tag_id, new_name)
+        self._populate_notebook_tree()
+        self.refresh_notes()
+        return tag
+
     def _on_notebook_selected(
         self,
         current: QTreeWidgetItem | None,
@@ -784,20 +808,23 @@ class MainWindow(QMainWindow):
         # The "Tags" header is non-selectable, so it never reaches here.
 
     def _show_notebook_menu(self, pos: QPoint) -> None:
-        """Right-click menu on the tree: create / rename / delete notebooks.
+        """Right-click menu on the tree, dispatched by the row kind.
 
-        Only notebook rows (and empty space) get the menu — right-clicking a tag
-        row or the "Tags" header does nothing, since tags are managed per-note via
-        the tag editor, not from here.
+        A notebook row (or empty space) gets the notebook menu: create / rename /
+        move / delete. A tag row gets the tag menu (rename it across the vault — see
+        :meth:`_show_tag_menu`). The non-selectable "Tags" grouping header has no
+        menu.
         """
         if self.repository is None:
             return
         item = self.notebook_tree.itemAt(pos)
-        if item is not None and item.data(0, _KIND_ROLE) in (
-            _KIND_TAG,
-            _KIND_TAGS_HEADER,
-        ):
+        kind = item.data(0, _KIND_ROLE) if item is not None else _KIND_NOTEBOOK
+        if kind == _KIND_TAGS_HEADER:
             return
+        if kind == _KIND_TAG:
+            self._show_tag_menu(item.data(0, Qt.ItemDataRole.UserRole), pos)
+            return
+
         notebook_id = (
             item.data(0, Qt.ItemDataRole.UserRole) if item is not None else None
         )
@@ -812,6 +839,16 @@ class MainWindow(QMainWindow):
             menu.addAction("Rename…", lambda *_: self._prompt_rename_notebook(notebook_id))
             menu.addAction("Move to…", lambda *_: self._prompt_move_notebook(notebook_id))
             menu.addAction("Delete", lambda *_: self._prompt_delete_notebook(notebook_id))
+        menu.exec(self.notebook_tree.viewport().mapToGlobal(pos))
+
+    def _show_tag_menu(self, tag_id: int, pos: QPoint) -> None:
+        """Right-click menu on a tag row: rename the tag across the vault.
+
+        Tag *assignment* stays per-note (the note-list "Tags…" editor); this menu
+        manages the tag itself, vault-wide. Routes to :meth:`_prompt_rename_tag`.
+        """
+        menu = QMenu(self.notebook_tree)
+        menu.addAction("Rename…", lambda *_: self._prompt_rename_tag(tag_id))
         menu.exec(self.notebook_tree.viewport().mapToGlobal(pos))
 
     def _prompt_new_notebook(self, *, parent_id: int | None = None) -> None:
@@ -873,6 +910,24 @@ class MainWindow(QMainWindow):
         )
         if reply == QMessageBox.StandardButton.Yes:
             self.remove_notebook(notebook_id)
+
+    def _prompt_rename_tag(self, tag_id: int) -> None:
+        """Ask for a new name and rename the tag via :meth:`rename_tag`.
+
+        Seeds the input with the tag's current name. A blank entry, or a name
+        already used by another tag, is ignored (the rename no-ops). Mirrors
+        :meth:`_prompt_rename_notebook`.
+        """
+        if self.repository is None:
+            return
+        current = self.repository.get_tag(tag_id)
+        if current is None:
+            return
+        name, ok = QInputDialog.getText(
+            self, "Rename tag", "New name:", text=current.name
+        )
+        if ok and name.strip():
+            self.rename_tag(tag_id, name.strip())
 
     def _populate_note_list(self, notes: list[Note]) -> None:
         """Replace the list rows with ``notes`` (title, falling back to body)."""

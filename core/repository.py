@@ -419,6 +419,29 @@ class Repository:
         ).fetchall()
         return [Tag(*row) for row in rows]
 
+    def rename_tag(self, tag_id: int, new_name: str) -> Tag:
+        """Rename a tag; the new name takes effect everywhere the tag is used.
+
+        A tag is shared across every note that carries it — the ``note_tags`` join
+        rows are keyed by ``tag_id``, not by name — so a rename updates the label on
+        all of them at once and leaves the associations intact. Returns the
+        refreshed tag; raises :class:`NotFoundError` if no tag has ``tag_id``. Tag
+        names are unique (``tags.name`` has a ``UNIQUE`` constraint), so renaming to
+        a name another tag already holds raises ``sqlcipher3.IntegrityError`` (the
+        failing ``UPDATE`` changes nothing); call :meth:`get_tag_by_name` first if
+        the caller needs to avoid that.
+        """
+        cur = self._conn.execute(
+            "UPDATE tags SET name = ? WHERE id = ?",
+            (new_name, tag_id),
+        )
+        self._conn.commit()
+        if cur.rowcount == 0:
+            raise NotFoundError(f"no tag with id {tag_id}")
+        updated = self.get_tag(tag_id)
+        assert updated is not None
+        return updated
+
     def delete_tag(self, tag_id: int) -> bool:
         """Delete a tag; return ``True`` if a row was removed.
 

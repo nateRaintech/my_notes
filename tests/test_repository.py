@@ -301,6 +301,45 @@ def test_delete_tag_detaches_from_notes_but_keeps_them(repo):
     assert _note_tag_count(repo._conn, note.id) == 0
 
 
+def test_rename_tag_updates_name_and_returns_refreshed(repo):
+    tag = repo.create_tag("wrok")  # mistyped
+    renamed = repo.rename_tag(tag.id, "work")
+    assert renamed == Tag(id=tag.id, name="work")
+    assert repo.get_tag(tag.id) == renamed
+    assert [t.name for t in repo.list_tags()] == ["work"]
+
+
+def test_rename_tag_missing_id_raises_not_found(repo):
+    with pytest.raises(NotFoundError):
+        repo.rename_tag(9999, "ghost")
+
+
+def test_rename_tag_duplicate_name_raises_and_keeps_original(repo):
+    keep = repo.create_tag("urgent")
+    other = repo.create_tag("later")
+    # tags.name is UNIQUE — renaming onto an existing name fails, changing nothing.
+    with pytest.raises(sqlcipher.IntegrityError):
+        repo.rename_tag(other.id, "urgent")
+    assert repo.get_tag(other.id).name == "later"
+    assert repo.get_tag(keep.id).name == "urgent"
+
+
+def test_rename_tag_to_its_own_name_is_a_noop_success(repo):
+    tag = repo.create_tag("idea")
+    assert repo.rename_tag(tag.id, "idea") == tag
+
+
+def test_rename_tag_preserves_note_associations(repo):
+    note = repo.create_note(body="tagged")
+    tag = repo.create_tag("draft")
+    repo.add_tag_to_note(note.id, tag.id)
+
+    repo.rename_tag(tag.id, "published")
+
+    # Same tag id, new name — the note still carries it (note_tags is keyed by id).
+    assert repo.tags_for_note(note.id) == [Tag(id=tag.id, name="published")]
+
+
 # -- note <-> tag association -------------------------------------------------
 
 
