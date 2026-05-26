@@ -18,7 +18,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QEventLoop, QTimer  # noqa: E402
+from PySide6.QtCore import QEventLoop, QThread, QTimer  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 import core.ai_client as ai_client  # noqa: E402
@@ -84,3 +84,30 @@ def test_finished_job_is_released(qapp, monkeypatch):
     # The job is dropped once the thread finishes (give the finished signal a tick).
     _pump(lambda: len(window._ai_jobs) == 0, timeout_ms=1000)
     assert window._ai_jobs == set()
+
+
+def test_result_callback_runs_on_main_thread(qapp, monkeypatch):
+    """Regression for #87: the per-call result callback MUST run on the main
+    (GUI) thread. Connecting worker signals to local closures delivers them on
+    the worker thread, so any GUI call (QMessageBox) from a handler crashes the
+    app. The fix routes results through MainWindow bound-method slots."""
+    main_thread = QApplication.instance().thread()
+    monkeypatch.setattr(ai_client, "chat", lambda k, m, *, timeout=120.0: "PONG")
+    window = MainWindow()
+    seen: dict[str, object] = {}
+
+    worker, thread = window._make_ai_worker("key", [{"role": "user", "content": "hi"}])
+    worker._main_on_reply = lambda reply: seen.update(
+        on_main=(QThread.currentThread() is main_thread), reply=reply
+    )
+    worker._main_on_error = lambda msg: seen.update(error=msg)
+    worker.finished.connect(window._on_ai_finished)
+    worker.error.connect(window._on_ai_error)
+    thread.started.connect(worker.run)
+    thread.start()
+    del worker
+    gc.collect()
+
+    _pump(lambda: bool(seen))
+    assert seen.get("reply") == "PONG"
+    assert seen.get("on_main") is True, "result callback ran off the main thread — would crash the GUI"

@@ -1010,20 +1010,23 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Testing connection…")
         self.test_connection_action.setEnabled(False)
 
-        def _on_finished(reply: str) -> None:
+        def on_reply(reply: str) -> None:
             self.statusBar().showMessage("Connection OK")
             self.test_connection_action.setEnabled(True)
             QMessageBox.information(self, "AI connection", f"Connection successful.\nReply: {reply}")
-            thread.quit()
 
-        def _on_error(message: str) -> None:
+        def on_error(message: str) -> None:
             self.statusBar().showMessage("Connection failed")
             self.test_connection_action.setEnabled(True)
             QMessageBox.warning(self, "AI connection", f"Connection failed:\n{message}")
-            thread.quit()
 
-        worker.finished.connect(_on_finished)
-        worker.error.connect(_on_error)
+        # These callbacks call QMessageBox, so they MUST run on the GUI thread.
+        # Stash them on the worker and connect its signals to the window's
+        # bound-method slots, which Qt queues to the main thread (#87).
+        worker._main_on_reply = on_reply
+        worker._main_on_error = on_error
+        worker.finished.connect(self._on_ai_finished)
+        worker.error.connect(self._on_ai_error)
         thread.started.connect(worker.run)
         thread.start()
 
@@ -1072,16 +1075,13 @@ class MainWindow(QMainWindow):
 
         worker, thread = self._make_ai_worker(api_key, messages)
 
-        def _on_finished(reply: str) -> None:
-            self.ai_chat_panel._on_reply(reply)
-            thread.quit()
-
-        def _on_error(message: str) -> None:
-            self.ai_chat_panel._on_error(message)
-            thread.quit()
-
-        worker.finished.connect(_on_finished)
-        worker.error.connect(_on_error)
+        # The panel updates touch widgets, so they MUST run on the GUI thread.
+        # Route results through the window's bound-method slots (queued to the
+        # main thread); connecting closures would run on the worker thread (#87).
+        worker._main_on_reply = self.ai_chat_panel._on_reply
+        worker._main_on_error = self.ai_chat_panel._on_error
+        worker.finished.connect(self._on_ai_finished)
+        worker.error.connect(self._on_ai_error)
         thread.started.connect(worker.run)
         thread.start()
 
@@ -1204,6 +1204,7 @@ class MainWindow(QMainWindow):
         thread = QThread(self)
         worker = AiWorker(api_key, messages, timeout=timeout)
         worker.moveToThread(thread)
+        worker._thread = thread  # the result slots (_on_ai_finished/_error) quit it
         # Keep a strong reference to the (worker, thread) pair so neither is
         # garbage-collected mid-flight. The thread is parented to the window, but
         # the worker has no parent (moveToThread forbids one), so without this it
@@ -1214,3 +1215,30 @@ class MainWindow(QMainWindow):
         thread.finished.connect(lambda: self._ai_jobs.discard(job))
         thread.finished.connect(thread.deleteLater)
         return worker, thread
+
+    def _on_ai_finished(self, reply: str) -> None:
+        """Main-thread slot for ``AiWorker.finished``; dispatches the per-call callback.
+
+        Connecting ``worker.finished`` to this **bound method of the (main-thread)
+        window** makes Qt deliver it on the GUI thread via a queued connection — so
+        the per-call ``_main_on_reply`` callback (which touches widgets / dialogs)
+        runs on the GUI thread. Connecting closures directly delivered on the worker
+        thread and crashed the app (#87).
+        """
+        worker = self.sender()
+        callback = getattr(worker, "_main_on_reply", None)
+        if callback is not None:
+            callback(reply)
+        thread = getattr(worker, "_thread", None)
+        if thread is not None:
+            thread.quit()
+
+    def _on_ai_error(self, message: str) -> None:
+        """Main-thread slot for ``AiWorker.error`` — see :meth:`_on_ai_finished`."""
+        worker = self.sender()
+        callback = getattr(worker, "_main_on_error", None)
+        if callback is not None:
+            callback(message)
+        thread = getattr(worker, "_thread", None)
+        if thread is not None:
+            thread.quit()
