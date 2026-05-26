@@ -26,6 +26,7 @@ from PySide6.QtCore import QEvent, QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QDialog,
+    QHBoxLayout,
     QInputDialog,
     QLabel,
     QLineEdit,
@@ -35,6 +36,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QSplitter,
+    QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -43,7 +45,7 @@ from PySide6.QtWidgets import (
 
 from core.autosave import DEFAULT_DEBOUNCE_SECONDS
 from core.notebooks import build_notebook_tree, would_create_cycle
-from core.settings import DEFAULT_SETTINGS, save_settings
+from core.settings import DEFAULT_SETTINGS, PANEL_KEYS, save_settings
 from core.text import count_words, derive_title
 from core.theme import DEFAULT_THEME, load_stylesheet
 from ui.autosave import AutoSaveController
@@ -185,6 +187,20 @@ class MainWindow(QMainWindow):
             Qt.ContextMenuPolicy.CustomContextMenu
         )
 
+        # Wrap the notebook tree in a container panel so we can give it a thin
+        # header row with a collapse button (the splitter holds the container,
+        # not the raw QTreeWidget, while self.notebook_tree still references the
+        # tree itself for all callers).
+        self._collapse_notebooks_btn = self._make_panel_btn("‹", "Hide Notebooks (restore via View menu)")
+        self.notebook_panel = QWidget()
+        self.notebook_panel.setMinimumWidth(_SIDEBAR_MIN_WIDTH)
+        _nb_hdr = self._make_header_widget("Notebooks", self._collapse_notebooks_btn)
+        _nb_layout = QVBoxLayout(self.notebook_panel)
+        _nb_layout.setContentsMargins(0, 0, 0, 0)
+        _nb_layout.setSpacing(0)
+        _nb_layout.addWidget(_nb_hdr)
+        _nb_layout.addWidget(self.notebook_tree)
+
         # Middle pane: a search box above the note list, wrapped in a composite
         # widget so the splitter still holds three (logical) panes. Typing filters
         # the list (full-text search); selecting a row loads that note.
@@ -197,18 +213,30 @@ class MainWindow(QMainWindow):
             Qt.ContextMenuPolicy.CustomContextMenu
         )
 
+        self._collapse_notelist_btn = self._make_panel_btn("‹", "Hide Note list (restore via View menu)")
         self.note_pane = QWidget()
         self.note_pane.setMinimumWidth(_NOTE_LIST_MIN_WIDTH)
         note_pane_layout = QVBoxLayout(self.note_pane)
         note_pane_layout.setContentsMargins(0, 0, 0, 0)
+        note_pane_layout.setSpacing(0)
+        _nl_hdr = self._make_header_widget("Note list", self._collapse_notelist_btn)
+        note_pane_layout.addWidget(_nl_hdr)
         note_pane_layout.addWidget(self.search_input)
         note_pane_layout.addWidget(self.note_list)
 
         self.editor = MarkdownEditor()
         self.editor.setMinimumWidth(_EDITOR_MIN_WIDTH)
 
+        # Panel visibility tracking: a set of PANEL_KEYS strings that are
+        # currently hidden. Widgets are shown/hidden via set_panel_visible();
+        # we do NOT use widget.isVisible() to track state because that returns
+        # False before the window is shown and would break headless tests.
+        self._hidden_panels: set[str] = set()
+        self._focus_mode = False
+        self._pre_focus_hidden: set[str] = set()
+
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
-        self.splitter.addWidget(self.notebook_tree)
+        self.splitter.addWidget(self.notebook_panel)
         self.splitter.addWidget(self.note_pane)
         self.splitter.addWidget(self.editor)
 
@@ -273,6 +301,65 @@ class MainWindow(QMainWindow):
         self.dark_theme_action.setCheckable(True)
         self.dark_theme_action.triggered.connect(self._on_toggle_dark_theme)
 
+        # Panel visibility actions — one per logical panel (Ctrl+Shift+1/2/3/4).
+        # Connected to triggered so programmatic setChecked() never re-fires them.
+        view_menu.addSeparator()
+        self.toggle_notebooks_action = view_menu.addAction("Notebooks")
+        self.toggle_notebooks_action.setCheckable(True)
+        self.toggle_notebooks_action.setChecked(True)
+        self.toggle_notebooks_action.setShortcut(QKeySequence("Ctrl+Shift+1"))
+        self.toggle_notebooks_action.triggered.connect(
+            lambda checked: self._on_panel_action("notebooks", checked)
+        )
+
+        self.toggle_notelist_action = view_menu.addAction("Note list")
+        self.toggle_notelist_action.setCheckable(True)
+        self.toggle_notelist_action.setChecked(True)
+        self.toggle_notelist_action.setShortcut(QKeySequence("Ctrl+Shift+2"))
+        self.toggle_notelist_action.triggered.connect(
+            lambda checked: self._on_panel_action("notelist", checked)
+        )
+
+        self.toggle_source_action = view_menu.addAction("Editor")
+        self.toggle_source_action.setCheckable(True)
+        self.toggle_source_action.setChecked(True)
+        self.toggle_source_action.setShortcut(QKeySequence("Ctrl+Shift+3"))
+        self.toggle_source_action.triggered.connect(
+            lambda checked: self._on_panel_action("source", checked)
+        )
+
+        self.toggle_preview_action = view_menu.addAction("Preview")
+        self.toggle_preview_action.setCheckable(True)
+        self.toggle_preview_action.setChecked(True)
+        self.toggle_preview_action.setShortcut(QKeySequence("Ctrl+Shift+4"))
+        self.toggle_preview_action.triggered.connect(
+            lambda checked: self._on_panel_action("preview", checked)
+        )
+
+        # Focus mode: hides Notebooks + Note list + Preview, leaving only the
+        # editor source. Toggling off restores the panels to their pre-focus state.
+        view_menu.addSeparator()
+        self.focus_mode_action = view_menu.addAction("Focus mode")
+        self.focus_mode_action.setCheckable(True)
+        self.focus_mode_action.setShortcut(QKeySequence("Ctrl+Shift+F"))
+        self.focus_mode_action.triggered.connect(
+            lambda checked: self._on_focus_mode_action(checked)
+        )
+
+        # Wire the on-panel collapse buttons to the visibility seam.
+        self._collapse_notebooks_btn.clicked.connect(
+            lambda: self.set_panel_visible("notebooks", False)
+        )
+        self._collapse_notelist_btn.clicked.connect(
+            lambda: self.set_panel_visible("notelist", False)
+        )
+        self.editor.collapse_source_btn.clicked.connect(
+            lambda: self.set_panel_visible("source", False)
+        )
+        self.editor.collapse_preview_btn.clicked.connect(
+            lambda: self.set_panel_visible("preview", False)
+        )
+
         # A live word count for the editor, pinned to the right of the status bar
         # (a permanent widget, so transient showMessage() text never overwrites
         # it). It updates on every edit and starts at the empty editor's count.
@@ -288,6 +375,132 @@ class MainWindow(QMainWindow):
         # across launches is the M5 Settings capability; for now it resets to
         # the default each launch.
         self.apply_theme(DEFAULT_THEME)
+
+    # -- panel visibility helpers --------------------------------------------
+
+    @staticmethod
+    def _make_panel_btn(label: str, tooltip: str) -> QToolButton:
+        """Small flat QToolButton used as a panel collapse affordance."""
+        btn = QToolButton()
+        btn.setText(label)
+        btn.setToolTip(tooltip)
+        btn.setAutoRaise(True)
+        btn.setFixedSize(20, 20)
+        return btn
+
+    @staticmethod
+    def _make_header_widget(title: str, btn: QToolButton) -> QWidget:
+        """Thin header row: a title label on the left, a collapse button on the right."""
+        row = QWidget()
+        row.setFixedHeight(22)
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(4, 0, 2, 0)
+        layout.setSpacing(2)
+        lbl = QLabel(title)
+        layout.addWidget(lbl)
+        layout.addStretch()
+        layout.addWidget(btn)
+        return row
+
+    def _panel_widget(self, key: str) -> QWidget:
+        """Return the widget that represents ``key``."""
+        return {
+            "notebooks": self.notebook_panel,
+            "notelist": self.note_pane,
+            "source": self.editor.source,
+            "preview": self.editor.preview,
+        }[key]
+
+    def _panel_action(self, key: str):
+        """Return the View-menu QAction for ``key``."""
+        return {
+            "notebooks": self.toggle_notebooks_action,
+            "notelist": self.toggle_notelist_action,
+            "source": self.toggle_source_action,
+            "preview": self.toggle_preview_action,
+        }[key]
+
+    def is_panel_visible(self, key: str) -> bool:
+        """Return ``True`` if panel ``key`` is currently visible."""
+        return key not in self._hidden_panels
+
+    def set_panel_visible(self, key: str, visible: bool) -> None:
+        """Show or hide panel ``key`` and keep the View-menu action in sync.
+
+        Uses the internal ``_hidden_panels`` set as the source of truth —
+        never ``widget.isVisible()`` — so the method is safe to call before
+        the window is shown (e.g. in headless tests).
+        """
+        if visible:
+            self._hidden_panels.discard(key)
+        else:
+            self._hidden_panels.add(key)
+        self._panel_widget(key).setVisible(visible)
+        self._panel_action(key).setChecked(visible)
+        self._persist_panel_state()
+
+    def toggle_panel(self, key: str) -> None:
+        """Toggle panel ``key`` between visible and hidden."""
+        self.set_panel_visible(key, not self.is_panel_visible(key))
+
+    def is_focus_mode(self) -> bool:
+        """Return ``True`` if focus mode is active."""
+        return self._focus_mode
+
+    def set_focus_mode(self, on: bool) -> None:
+        """Enable or disable focus mode, storing and restoring the pre-focus state.
+
+        Enabling hides Notebooks + Note list + Preview (leaving editor source
+        only). Disabling restores exactly the hidden set that was in effect
+        *before* focus mode was engaged — the user's "natural" layout — so
+        focus mode is a temporary override, not a destructive one.
+        """
+        if on == self._focus_mode:
+            return
+        self._focus_mode = on
+        self.focus_mode_action.setChecked(on)
+        if on:
+            # Snapshot the current hidden set so we can restore it on exit.
+            self._pre_focus_hidden = set(self._hidden_panels)
+            for key in ("notebooks", "notelist", "preview"):
+                self.set_panel_visible(key, False)
+        else:
+            # Restore each panel to the state it had before focus mode. For
+            # panels that were already hidden, keep them hidden; for the three
+            # focus-mode-forced ones, restore them if they were visible before.
+            target = set(self._pre_focus_hidden)
+            for key in PANEL_KEYS:
+                self.set_panel_visible(key, key not in target)
+
+    def _on_panel_action(self, key: str, checked: bool) -> None:
+        """View-menu handler: show/hide ``key`` without re-entering via setChecked."""
+        # When focus mode is active and the user explicitly shows a panel, exit
+        # focus mode so the mode's state stays coherent.
+        if self._focus_mode and checked:
+            self._focus_mode = False
+            self.focus_mode_action.setChecked(False)
+        self.set_panel_visible(key, checked)
+
+    def _on_focus_mode_action(self, checked: bool) -> None:
+        """View-menu handler for the Focus mode action."""
+        self.set_focus_mode(checked)
+
+    # -- panel persistence ---------------------------------------------------
+
+    def _persist_panel_state(self) -> None:
+        """Persist the current panel-visibility + splitter sizes, if enabled."""
+        if not self._persist_settings:
+            return
+        hidden = tuple(k for k in PANEL_KEYS if k in self._hidden_panels)
+        panel_sizes = tuple(self.splitter.sizes())
+        editor_sizes = tuple(self.editor.splitter.sizes())
+        self.settings = replace(
+            self.settings,
+            hidden_panels=hidden,
+            panel_sizes=panel_sizes,
+            editor_sizes=editor_sizes,
+        )
+        save_settings(self.settings, self.settings_path)
 
     def bind_autosave(
         self,
@@ -378,12 +591,24 @@ class MainWindow(QMainWindow):
         Records the current :attr:`settings` and where to persist changes
         (:attr:`settings_path`; ``None`` = the default location), enables
         persistence of subsequent theme changes, and applies the saved theme so a
-        freshly launched window reflects the user's last choice.
+        freshly launched window reflects the user's last choice.  Also restores
+        any saved panel visibility and splitter sizes.
         """
         self.settings = settings
         self.settings_path = settings_path
         self._persist_settings = True
         self.apply_theme(settings.theme)
+
+        # Restore hidden panels (apply before splitter sizes so hidden widgets
+        # don't affect size calculations).
+        for key in settings.hidden_panels:
+            self.set_panel_visible(key, False)
+
+        # Restore splitter sizes (only when non-empty).
+        if settings.panel_sizes:
+            self.splitter.setSizes(list(settings.panel_sizes))
+        if settings.editor_sizes:
+            self.editor.splitter.setSizes(list(settings.editor_sizes))
 
     def open_settings(self) -> None:
         """Open the Settings dialog and apply the result to the live window.

@@ -51,13 +51,16 @@ def test_panes_are_typed_attributes_in_order(qapp):
     assert isinstance(window.note_list, QListWidget)
     assert isinstance(window.search_input, QLineEdit)
     assert isinstance(window.editor, MarkdownEditor)
-    # Panes appear in the splitter left-to-right: tree, middle pane, editor. The
-    # middle pane is now a composite (search box above the note list) so the
-    # splitter still holds three logical panes.
-    assert window.splitter.widget(0) is window.notebook_tree
+    # Panes appear in the splitter left-to-right: notebook panel container,
+    # middle pane, editor.  The notebook_tree is wrapped inside notebook_panel
+    # (so it gets a header row with a collapse button); the splitter holds the
+    # container, not the raw tree.
+    assert window.splitter.widget(0) is window.notebook_panel
     assert window.splitter.widget(1) is window.note_pane
     assert window.splitter.widget(2) is window.editor
     assert isinstance(window.note_pane, QWidget)
+    # The notebook tree lives inside the notebook_panel container.
+    assert window.notebook_tree.parent() is window.notebook_panel
     # The search box and note list both live inside the middle pane.
     assert window.search_input.parent() is window.note_pane
     assert window.note_list.parent() is window.note_pane
@@ -78,8 +81,9 @@ def test_editor_pane_absorbs_resize(qapp):
     window = MainWindow()
     # QSplitter.setStretchFactor records the factor on the child's size policy
     # (there is no stretchFactor getter on the splitter). Only the editor pane
-    # stretches when the window widens.
-    assert window.notebook_tree.sizePolicy().horizontalStretch() == 0
-    # The middle splitter child is now the composite note pane (index 1).
+    # stretches when the window widens.  The splitter's first child is now the
+    # notebook_panel container (the tree is wrapped inside it).
+    assert window.notebook_panel.sizePolicy().horizontalStretch() == 0
+    # The middle splitter child is the composite note pane (index 1).
     assert window.note_pane.sizePolicy().horizontalStretch() == 0
     assert window.editor.sizePolicy().horizontalStretch() == 1

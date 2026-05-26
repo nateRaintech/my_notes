@@ -23,9 +23,12 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
     QPlainTextEdit,
     QSplitter,
     QTextEdit,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -36,6 +39,16 @@ from PySide6.QtWidgets import (
 _PANE_MIN_WIDTH = 160
 
 
+def _make_collapse_button(label: str, tooltip: str) -> QToolButton:
+    """Return a small flat QToolButton used as a panel collapse affordance."""
+    btn = QToolButton()
+    btn.setText(label)
+    btn.setToolTip(tooltip)
+    btn.setAutoRaise(True)
+    btn.setFixedSize(20, 20)
+    return btn
+
+
 class MarkdownEditor(QWidget):
     """Editable Markdown source with a live-rendered preview beside it.
 
@@ -43,6 +56,8 @@ class MarkdownEditor(QWidget):
         source: the editable :class:`QPlainTextEdit` holding the raw Markdown.
         preview: the read-only :class:`QTextEdit` showing the rendered Markdown.
         splitter: the horizontal :class:`QSplitter` holding source | preview.
+        collapse_source_btn: small button to collapse the source sub-pane.
+        collapse_preview_btn: small button to collapse the preview sub-pane.
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -62,8 +77,23 @@ class MarkdownEditor(QWidget):
         # Keep both sub-panes visible: a drag can resize but not collapse one.
         self.splitter.setChildrenCollapsible(False)
 
+        # Thin toolbar row with per-pane collapse buttons above the splitter.
+        self.collapse_source_btn = _make_collapse_button("‹", "Hide editor source (restore via View menu)")
+        self.collapse_preview_btn = _make_collapse_button("›", "Hide preview (restore via View menu)")
+        toolbar = QWidget()
+        toolbar.setFixedHeight(22)
+        toolbar_layout = QHBoxLayout(toolbar)
+        toolbar_layout.setContentsMargins(4, 0, 2, 0)
+        toolbar_layout.setSpacing(4)
+        toolbar_layout.addWidget(QLabel("Editor"))
+        toolbar_layout.addStretch()
+        toolbar_layout.addWidget(self.collapse_source_btn)
+        toolbar_layout.addWidget(self.collapse_preview_btn)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(toolbar)
         layout.addWidget(self.splitter)
 
         # Live preview: re-render on every edit, with no explicit render action.
