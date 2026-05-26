@@ -32,20 +32,25 @@ See `CLAUDE.md` for the full design and architecture (strict `core/` logic vs `u
 
 ## Milestones
 
-### M7: Tag Management & Multi-Tag Filtering — `status: in progress`
+### M8: AI Assistant & Dockable Layout — `status: in-progress`  (v1.0 finish line)
 
-M1–M6 made core note-taking complete: create, edit, delete, organize, search, and
-import notes, plus assign / remove / filter-by tags. But the tag layer can only
-attach a tag to a note and filter by **one** tag — a tag itself cannot yet be
-**managed across the vault**. There is no way to fix a mistyped tag name everywhere
-it is used, or to remove a tag entirely, and the note list filters by a single tag
-at a time. These are the remaining completion gaps for tagging, named repeatedly in
-M6's closing lessons as the standing candidates once the roadmap ran dry.
+The final milestone for **v1.0**: a fully flexible window layout, and AI features
+(chat + analyze) backed by a securely-stored API key. Whole-DB encryption stays;
+the AI features deliberately send the relevant text to the configured inference
+endpoint (`X-API-Key`, OpenAI-compatible) when the user invokes them.
 
-> Note: this milestone was proposed by autodev (the roadmap was exhausted after M6)
-> to surface the documented tag-management gaps rather than churn speculative
-> fallback work — the candidates were flagged in M6's lessons, not invented here.
-> Reorder or rescope freely; this file is the steering lever.
+- [ ] Dockable layout — convert all panels (Notebooks, Note list, Editor, Preview) to movable / floatable / closable `QDockWidget`s (drag to re-dock at any edge, tab together, float out as standalone windows); the entire layout is saved and restored across launches; Focus mode hides all docks. Supersedes the splitter-based panel toggles (#75)
+- [ ] Secure API key storage — store / replace / clear an API key in the encrypted vault, never revealed in the UI (set / replace / clear only); plus `core/ai_client.py` calling the inference endpoint with the `X-API-Key` header
+- [ ] AI Chat dock — a dockable chat panel: threaded request/response with in-session conversation context, a "Thinking…" / Cancel state, a Clear button, and Save-as-note
+- [ ] Analyze selection — "Analyze text with AI" on highlighted editor text: an optional extra prompt (blank = summarize), seeds the chat with the selection, then continues as a saveable chat
+- [ ] Analyze note — "Analyze note with AI" on a note selected in the note list: the whole note body as context, otherwise identical to Analyze selection
+
+### M7: Tag Management & Multi-Tag Filtering — `status: deferred (post-1.0)`
+
+Autodev-proposed tag-management polish (the roadmap was exhausted after M6, so this
+surfaced the documented tag gaps). **Deferred past v1.0 at the owner's direction** —
+not part of the 1.0 scope. Partial "rename a tag" WIP (#73) is parked on the
+`feature/73-rename-tag` branch. Pick up after 1.0 if desired.
 
 - [ ] Rename a tag across the whole vault (right-click a tag in the sidebar -> Rename), so a mistyped or rebranded label updates everywhere it is used
 - [ ] Delete a tag from the whole vault, with a confirmation prompt (right-click a tag -> Delete), detaching it from every note that carried it
