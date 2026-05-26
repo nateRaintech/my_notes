@@ -469,6 +469,52 @@ class Repository:
         ).fetchall()
         return [Tag(*row) for row in rows]
 
+    # -- secrets (API key store) ---------------------------------------------
+
+    # The secret name used for the AI inference API key.
+    _API_KEY_NAME = "ai_api_key"
+
+    def set_api_key(self, key: str) -> None:
+        """Store (or replace) the AI API key in the encrypted vault.
+
+        The whole database is SQLCipher-encrypted, so the key is protected at
+        rest. It is stored verbatim and is NEVER surfaced to the UI; callers that
+        need it for network requests use :meth:`get_api_key` directly.
+        """
+        self._conn.execute(
+            "INSERT OR REPLACE INTO app_secrets (name, value) VALUES (?, ?)",
+            (self._API_KEY_NAME, key),
+        )
+        self._conn.commit()
+
+    def has_api_key(self) -> bool:
+        """Return ``True`` if an API key is stored in the vault."""
+        row = self._conn.execute(
+            "SELECT 1 FROM app_secrets WHERE name = ?",
+            (self._API_KEY_NAME,),
+        ).fetchone()
+        return row is not None
+
+    def get_api_key(self) -> str | None:
+        """Return the stored API key, or ``None`` if none is stored.
+
+        For use by the AI client **only** — never pass the return value to the
+        UI or log it anywhere.
+        """
+        row = self._conn.execute(
+            "SELECT value FROM app_secrets WHERE name = ?",
+            (self._API_KEY_NAME,),
+        ).fetchone()
+        return row[0] if row is not None else None
+
+    def clear_api_key(self) -> None:
+        """Remove the stored API key from the vault (no-op if absent)."""
+        self._conn.execute(
+            "DELETE FROM app_secrets WHERE name = ?",
+            (self._API_KEY_NAME,),
+        )
+        self._conn.commit()
+
     # -- full-text search ----------------------------------------------------
 
     def search_notes(self, query: str, *, limit: int | None = None) -> list[Note]:
