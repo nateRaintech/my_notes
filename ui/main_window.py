@@ -306,6 +306,14 @@ class MainWindow(QMainWindow):
         self.test_connection_action.triggered.connect(self.open_test_connection)
         self.chat_action = self._ai_menu.addAction("Chat")
         self.chat_action.triggered.connect(self.open_ai_chat)
+        self._ai_menu.addSeparator()
+        self.analyze_text_action = self._ai_menu.addAction("Analyze text with AI")
+        self.analyze_text_action.triggered.connect(self.analyze_selection)
+        # Enable only when there is a selection; also guarded at trigger time.
+        self.editor.source.copyAvailable.connect(self.analyze_text_action.setEnabled)
+        self.analyze_text_action.setEnabled(False)
+        self.analyze_note_action = self._ai_menu.addAction("Analyze note with AI")
+        self.analyze_note_action.triggered.connect(self.analyze_note)
 
         # --- Status bar ------------------------------------------------------
 
@@ -913,6 +921,7 @@ class MainWindow(QMainWindow):
             "Move to notebook…", lambda *_: self._prompt_move_note(note)
         )
         menu.addAction("Tags…", lambda *_: self.open_tag_editor(note))
+        menu.addAction("Analyze note with AI", lambda *_: self.analyze_note(note))
         menu.addAction("Delete", lambda *_: self._prompt_delete_note(note))
         menu.exec(self.note_list.viewport().mapToGlobal(pos))
 
@@ -1085,6 +1094,90 @@ class MainWindow(QMainWindow):
         )
         self.refresh_notes()
         self.statusBar().showMessage("Chat saved as note.")
+
+    def analyze_selection(self) -> None:
+        """Seed the AI chat with the currently selected editor text.
+
+        Reads the selection from the editor source, converts Qt's paragraph
+        separator (U+2029 and U+2028) back to newlines, asks for an optional
+        prompt via :meth:`_ask_analysis_prompt`, then opens the AI chat and
+        calls :meth:`~ui.ai_chat.AiChatPanel.start_with_context`.
+
+        No-op (with a status message) if:
+        * nothing is selected in the editor,
+        * the vault is locked (``self.repository is None``),
+        * the vault has no API key, or
+        * the user cancels the prompt dialog.
+        """
+        selected = self.editor.source.textCursor().selectedText()
+        # Qt uses U+2029 (PARAGRAPH SEPARATOR) between paragraphs and U+2028
+        # (LINE SEPARATOR) for soft line-breaks — convert both to plain newlines.
+        selected = selected.replace(" ", "\n").replace(" ", "\n")
+        if not selected.strip():
+            self.statusBar().showMessage("No text selected — select text first.")
+            return
+        if self.repository is None:
+            self.statusBar().showMessage("Vault is locked — unlock the vault first.")
+            return
+        if not self.repository.has_api_key():
+            self.statusBar().showMessage("No API key stored. Set one via AI → Set API key…")
+            return
+        prompt = self._ask_analysis_prompt()
+        if prompt is None:
+            return
+        self.open_ai_chat()
+        self.ai_chat_panel.start_with_context(selected, prompt)
+
+    def analyze_note(self, note=None) -> None:
+        """Seed the AI chat with the body of a note.
+
+        ``note`` defaults to the currently selected item in the note list.
+
+        No-op (with a status message) if:
+        * no note is provided and none is selected,
+        * the vault is locked,
+        * the vault has no API key, or
+        * the user cancels the prompt dialog.
+        """
+        if note is None:
+            item = self.note_list.currentItem()
+            if item is None:
+                self.statusBar().showMessage("No note selected — select a note first.")
+                return
+            note = item.data(Qt.ItemDataRole.UserRole)
+        if note is None:
+            self.statusBar().showMessage("No note selected — select a note first.")
+            return
+        if self.repository is None:
+            self.statusBar().showMessage("Vault is locked — unlock the vault first.")
+            return
+        if not self.repository.has_api_key():
+            self.statusBar().showMessage("No API key stored. Set one via AI → Set API key…")
+            return
+        prompt = self._ask_analysis_prompt()
+        if prompt is None:
+            return
+        self.open_ai_chat()
+        self.ai_chat_panel.start_with_context(note.body, prompt)
+
+    def _ask_analysis_prompt(self) -> str | None:
+        """Ask the user for an optional analysis prompt via a dialog.
+
+        Returns the entered text (possibly blank — blank means "summarize"),
+        or ``None`` if the user clicked Cancel.
+
+        This is the monkeypatchable seam for tests: replace it with a lambda
+        that returns a fixed string (or ``None``) to bypass the modal dialog.
+        """
+        text, ok = QInputDialog.getMultiLineText(
+            self,
+            "Analyze with AI",
+            "Optional prompt (leave blank to summarise):",
+            "",
+        )
+        if not ok:
+            return None
+        return text
 
     def _make_ai_worker(
         self,
