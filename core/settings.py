@@ -34,6 +34,9 @@ from core.theme import DEFAULT_THEME, available_themes
 # app.py). Used by tests and power users.
 SETTINGS_PATH_ENV = "MY_NOTES_SETTINGS"
 
+# Valid panel key strings — the canonical order matches the View-menu order.
+PANEL_KEYS = ("notebooks", "notelist", "source", "preview")
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -52,6 +55,12 @@ class Settings:
     lock_on_minimize: bool = False
     # Theme name (see core.theme.available_themes()).
     theme: str = DEFAULT_THEME
+    # Panel visibility — keys from PANEL_KEYS that are currently hidden.
+    hidden_panels: tuple[str, ...] = ()
+    # Main splitter pane widths (pixels); empty tuple = use defaults.
+    panel_sizes: tuple[int, ...] = ()
+    # Editor sub-splitter widths (pixels); empty tuple = use defaults.
+    editor_sizes: tuple[int, ...] = ()
 
 
 DEFAULT_SETTINGS = Settings()
@@ -92,6 +101,31 @@ def _coerce_theme(value: object) -> str:
     return value if isinstance(value, str) and value in available_themes() else DEFAULT_THEME
 
 
+def _coerce_hidden_panels(value: object) -> tuple[str, ...]:
+    """Tuple of known PANEL_KEYS values, deduped, preserving order; () on any error."""
+    if not isinstance(value, list):
+        return ()
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in value:
+        if isinstance(item, str) and item in PANEL_KEYS and item not in seen:
+            seen.add(item)
+            result.append(item)
+    return tuple(result)
+
+
+def _coerce_sizes(value: object) -> tuple[int, ...]:
+    """Tuple of positive ints; () when the list is missing, empty, or invalid."""
+    if not isinstance(value, list) or not value:
+        return ()
+    result: list[int] = []
+    for item in value:
+        if isinstance(item, bool) or not isinstance(item, int) or item <= 0:
+            return ()
+        result.append(item)
+    return tuple(result)
+
+
 def _from_mapping(data: dict[str, object]) -> Settings:
     """Build a validated :class:`Settings` from a raw JSON mapping.
 
@@ -103,6 +137,9 @@ def _from_mapping(data: dict[str, object]) -> Settings:
         vault_path=_coerce_vault_path(data.get("vault_path")),
         lock_on_minimize=_coerce_lock_on_minimize(data.get("lock_on_minimize")),
         theme=_coerce_theme(data.get("theme")),
+        hidden_panels=_coerce_hidden_panels(data.get("hidden_panels")),
+        panel_sizes=_coerce_sizes(data.get("panel_sizes")),
+        editor_sizes=_coerce_sizes(data.get("editor_sizes")),
     )
 
 
