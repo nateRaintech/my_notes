@@ -32,19 +32,6 @@ See `CLAUDE.md` for the full design and architecture (strict `core/` logic vs `u
 
 ## Milestones
 
-### M8: AI Assistant & Dockable Layout — `status: in-progress`  (v1.0 finish line)
-
-The final milestone for **v1.0**: a fully flexible window layout, and AI features
-(chat + analyze) backed by a securely-stored API key. Whole-DB encryption stays;
-the AI features deliberately send the relevant text to the configured inference
-endpoint (`X-API-Key`, OpenAI-compatible) when the user invokes them.
-
-- [ ] Dockable layout — convert all panels (Notebooks, Note list, Editor, Preview) to movable / floatable / closable `QDockWidget`s (drag to re-dock at any edge, tab together, float out as standalone windows); the entire layout is saved and restored across launches; Focus mode hides all docks. Supersedes the splitter-based panel toggles (#75)
-- [ ] Secure API key storage — store / replace / clear an API key in the encrypted vault, never revealed in the UI (set / replace / clear only); plus `core/ai_client.py` calling the inference endpoint with the `X-API-Key` header
-- [ ] AI Chat dock — a dockable chat panel: threaded request/response with in-session conversation context, a "Thinking…" / Cancel state, a Clear button, and Save-as-note
-- [ ] Analyze selection — "Analyze text with AI" on highlighted editor text: an optional extra prompt (blank = summarize), seeds the chat with the selection, then continues as a saveable chat
-- [ ] Analyze note — "Analyze note with AI" on a note selected in the note list: the whole note body as context, otherwise identical to Analyze selection
-
 ### M7: Tag Management & Multi-Tag Filtering — `status: deferred (post-1.0)`
 
 Autodev-proposed tag-management polish (the roadmap was exhausted after M6, so this
@@ -59,6 +46,17 @@ not part of the 1.0 scope. Partial "rename a tag" WIP (#73) is parked on the
 ---
 
 ## Completed milestones
+
+### M8: AI Assistant & Dockable Layout — `status: done` (completed 2026-05-26) — **v1.0**
+
+The v1.0 finish line: a fully dockable / floatable / persistent window layout, and AI
+features (chat + analyze) backed by an API key stored encrypted in the vault.
+
+- [x] Dockable layout — all panels are movable / floatable / closable `QDockWidget`s; the whole layout is saved & restored; Focus mode hides all docks. Superseded the #75 splitter toggles. (#77 / PR #78)
+- [x] Secure API key storage — key stored in the encrypted vault (`app_secrets`, schema v2), never revealed in the UI; `core/ai_client.py` calls the endpoint with `X-API-Key`. (#79 / PR #80)
+- [x] AI Chat dock — dockable threaded chat with in-session context, Thinking / Cancel, Clear, and Save-as-note (`core/conversation.py` + `ui/ai_chat.py`). (#81 / PR #82)
+- [x] Analyze selection — "Analyze text with AI" seeds the chat with the editor selection (blank prompt = summarize). (#83 / PR #84)
+- [x] Analyze note — "Analyze note with AI" seeds the chat with the selected note's body. (#83 / PR #84)
 
 ### M6: Note Authoring & Tags UI — `status: done` (completed 2026-05-23)
 
