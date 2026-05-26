@@ -49,20 +49,6 @@ def _make_collapse_button(label: str, tooltip: str) -> QToolButton:
     return btn
 
 
-def _make_header_row(title: str, btn: QToolButton) -> QWidget:
-    """Return a thin header widget containing a label and a collapse button."""
-    row = QWidget()
-    row.setFixedHeight(22)
-    layout = QHBoxLayout(row)
-    layout.setContentsMargins(4, 0, 2, 0)
-    layout.setSpacing(2)
-    lbl = QLabel(title)
-    layout.addWidget(lbl)
-    layout.addStretch()
-    layout.addWidget(btn)
-    return row
-
-
 class MarkdownEditor(QWidget):
     """Editable Markdown source with a live-rendered preview beside it.
 
