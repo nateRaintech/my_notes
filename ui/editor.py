@@ -1,19 +1,20 @@
-"""The Markdown editor pane: editable source beside a live-rendered preview.
+"""The Markdown editor: editable source with a live-rendered preview.
 
-The right pane of the app shell (``ui/main_window.py``). A :class:`MarkdownEditor`
-holds two side-by-side widgets in a non-collapsible :class:`QSplitter`:
+In the dock layout (issue #77), :attr:`MarkdownEditor.source` is the central
+widget of the main window and :attr:`MarkdownEditor.preview` lives inside a
+QDockWidget. ``MarkdownEditor`` continues to own both widgets and the
+``textChanged → preview re-render`` wiring so the live-preview invariant is
+preserved regardless of where the UI places each widget.
 
-* ``source`` — an editable :class:`QPlainTextEdit` holding the raw Markdown.
-* ``preview`` — a read-only :class:`QTextEdit` that re-renders the source via
-  :meth:`QTextEdit.setMarkdown` (which uses ``QTextDocument.setMarkdown()``
-  underneath) on every edit. The preview tracks the source *live* — there is no
-  Save/Render button.
-
-Loading and persisting note bodies is deliberately **out of scope** here: the
-auto-save capability and the note-list/unlock flow wire this widget to
-``core.repository.Repository`` in later M3/M4 work (ROADMAP.md). This widget only
-edits text and shows its rendered form; :meth:`set_markdown` / :meth:`markdown`
-are the seams those capabilities will drive.
+Public seams (unchanged):
+* ``source`` — QPlainTextEdit holding raw Markdown (central widget in main window).
+* ``preview`` — read-only QTextEdit showing the rendered output (inside a dock).
+* ``splitter`` — retained as an attribute for tests that check the editor's
+  internal structure; in the dock layout the splitter is no longer the primary
+  layout container (source and preview are placed separately), but it still
+  holds both widgets so that tests relying on ``splitter.widget(0/1)`` continue
+  to pass.
+* :meth:`set_markdown` / :meth:`markdown` — the auto-save seam.
 
 Per CLAUDE.md's strict layering, the UI layer may import Qt freely; ``core/``
 must never import this module.
@@ -23,41 +24,31 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QHBoxLayout,
-    QLabel,
     QPlainTextEdit,
     QSplitter,
     QTextEdit,
-    QToolButton,
-    QVBoxLayout,
     QWidget,
 )
 
-# Minimum width each sub-pane keeps so a drag can't squeeze one to nothing
-# (paired with setChildrenCollapsible(False) to keep both source and preview
-# visible).
+# Minimum width each sub-pane keeps so a drag can't squeeze one to nothing.
 _PANE_MIN_WIDTH = 160
 
 
-def _make_collapse_button(label: str, tooltip: str) -> QToolButton:
-    """Return a small flat QToolButton used as a panel collapse affordance."""
-    btn = QToolButton()
-    btn.setText(label)
-    btn.setToolTip(tooltip)
-    btn.setAutoRaise(True)
-    btn.setFixedSize(20, 20)
-    return btn
-
-
 class MarkdownEditor(QWidget):
-    """Editable Markdown source with a live-rendered preview beside it.
+    """Editable Markdown source with a live-rendered preview.
+
+    In the dock layout, MainWindow places ``source`` as its central widget and
+    wraps ``preview`` in a QDockWidget. ``MarkdownEditor`` is still constructed
+    and held as ``window.editor`` so all callers and tests that access
+    ``window.editor.source``, ``window.editor.preview``, ``window.editor.markdown()``,
+    and ``window.editor.set_markdown()`` continue to work without change.
 
     Attributes:
         source: the editable :class:`QPlainTextEdit` holding the raw Markdown.
         preview: the read-only :class:`QTextEdit` showing the rendered Markdown.
-        splitter: the horizontal :class:`QSplitter` holding source | preview.
-        collapse_source_btn: small button to collapse the source sub-pane.
-        collapse_preview_btn: small button to collapse the preview sub-pane.
+        splitter: a :class:`QSplitter` that owns both widgets (retained for
+            backward-compatible test assertions; not used as the primary layout
+            container in the dock architecture).
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -71,30 +62,16 @@ class MarkdownEditor(QWidget):
         self.preview.setReadOnly(True)
         self.preview.setMinimumWidth(_PANE_MIN_WIDTH)
 
+        # The splitter owns both widgets (keeps their parent set to the splitter
+        # hierarchy) and is retained so existing tests that check
+        # splitter.widget(0)/widget(1) and splitter.childrenCollapsible() keep
+        # passing. In the dock layout, MainWindow re-parents source and preview
+        # into their respective positions (central widget / dock), so the splitter
+        # is not shown directly.
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.splitter.addWidget(self.source)
         self.splitter.addWidget(self.preview)
-        # Keep both sub-panes visible: a drag can resize but not collapse one.
         self.splitter.setChildrenCollapsible(False)
-
-        # Thin toolbar row with per-pane collapse buttons above the splitter.
-        self.collapse_source_btn = _make_collapse_button("‹", "Hide editor source (restore via View menu)")
-        self.collapse_preview_btn = _make_collapse_button("›", "Hide preview (restore via View menu)")
-        toolbar = QWidget()
-        toolbar.setFixedHeight(22)
-        toolbar_layout = QHBoxLayout(toolbar)
-        toolbar_layout.setContentsMargins(4, 0, 2, 0)
-        toolbar_layout.setSpacing(4)
-        toolbar_layout.addWidget(QLabel("Editor"))
-        toolbar_layout.addStretch()
-        toolbar_layout.addWidget(self.collapse_source_btn)
-        toolbar_layout.addWidget(self.collapse_preview_btn)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        layout.addWidget(toolbar)
-        layout.addWidget(self.splitter)
 
         # Live preview: re-render on every edit, with no explicit render action.
         self.source.textChanged.connect(self._render_preview)
