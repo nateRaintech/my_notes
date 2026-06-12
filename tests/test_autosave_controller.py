@@ -127,6 +127,45 @@ def test_flush_persists_pending_edit_immediately(qapp, repo):
     assert repo.get_note(note.id).body == "written without waiting"
 
 
+def test_typing_into_an_unbound_editor_emits_orphan_edit(qapp, repo):
+    editor = MarkdownEditor()
+    controller = AutoSaveController(editor, repo, debounce=DEBOUNCE, clock=FakeClock())
+    seen: list[str] = []
+    controller.orphan_edit_detected.connect(seen.append)
+
+    # No note is loaded, so the first keystroke is an "orphan" edit that belongs
+    # to no note yet — the controller signals it so the UI can create one.
+    editor.source.setPlainText("orphan thoughts")
+
+    assert seen == ["orphan thoughts"]
+
+
+def test_no_orphan_signal_once_a_note_is_bound(qapp, repo):
+    note = repo.create_note(title="Bound", body="")
+    editor = MarkdownEditor()
+    controller = AutoSaveController(editor, repo, debounce=DEBOUNCE, clock=FakeClock())
+    controller.load_note(note)
+    seen: list[str] = []
+    controller.orphan_edit_detected.connect(seen.append)
+
+    # A note is bound, so edits are tracked normally and no orphan is signalled.
+    editor.source.setPlainText("typed into a real note")
+
+    assert seen == []
+
+
+def test_clearing_an_unbound_editor_emits_no_orphan_edit(qapp, repo):
+    editor = MarkdownEditor()
+    controller = AutoSaveController(editor, repo, debounce=DEBOUNCE, clock=FakeClock())
+    seen: list[str] = []
+    controller.orphan_edit_detected.connect(seen.append)
+
+    # Empty text in an unbound editor is not worth a note — no signal.
+    editor.source.setPlainText("")
+
+    assert seen == []
+
+
 # -- MainWindow seam --------------------------------------------------------
 
 
@@ -152,3 +191,53 @@ def test_main_window_load_note_without_autosave_still_shows_body(qapp, repo):
     window = MainWindow()  # no bind_autosave: editor edits text with nowhere to persist
     window.load_note(note)
     assert window.editor.markdown() == "just showing this"
+
+
+def test_typing_with_no_note_loaded_creates_and_binds_a_note(qapp, repo):
+    window = MainWindow()
+    window.bind_autosave(repo)
+    window.refresh_notes()
+    # Fresh launch: nothing is loaded, so the editor is unbound.
+    assert window.autosave.saver.note_id is None
+
+    window.editor.source.setPlainText("a thought I started writing")
+
+    # The first keystroke created a real note and bound it to the editor.
+    assert window.autosave.saver.note_id is not None
+    assert len(repo.list_notes()) == 1
+    # The new note is the selected row in the list.
+    from PySide6.QtCore import Qt
+
+    current = window.note_list.currentItem()
+    assert current is not None
+    assert current.data(Qt.ItemDataRole.UserRole).id == window.autosave.saver.note_id
+
+
+def test_orphan_text_is_saved_when_navigating_to_another_note(qapp, repo):
+    existing = repo.create_note(title="Old", body="old body")
+    window = MainWindow()
+    window.bind_autosave(repo)
+    window.refresh_notes()
+
+    # Type with nothing loaded, then click an existing note in the navigator.
+    window.editor.source.setPlainText("brand new idea")
+    window._select_note(existing.id)
+
+    # The in-progress text was persisted as its own note, not lost...
+    bodies = {n.body for n in repo.list_notes()}
+    assert bodies == {"old body", "brand new idea"}
+    # ...and the editor now shows the note that was clicked.
+    assert window.editor.markdown() == "old body"
+
+
+def test_typing_in_new_note_does_not_create_a_second_note(qapp, repo):
+    window = MainWindow()
+    window.bind_autosave(repo)
+    window.refresh_notes()
+
+    # New Note already binds a note; typing into it must not spawn another.
+    window.new_note()
+    window.editor.source.setPlainText("groceries")
+    window.editor.source.setPlainText("groceries and milk")
+
+    assert len(repo.list_notes()) == 1
