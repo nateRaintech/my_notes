@@ -17,7 +17,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Callable
 
-from PySide6.QtCore import QObject, QTimer
+from PySide6.QtCore import QObject, QTimer, Signal
 
 from core.autosave import DEFAULT_DEBOUNCE_SECONDS, AutoSaver
 
@@ -40,7 +40,20 @@ class AutoSaveController(QObject):
     immediately. Load a note for editing with :meth:`load_note`. The pure-Python
     saver is exposed as :attr:`saver` for tests and for callers that want to drive
     flushes directly.
+
+    When text is typed while **no note is bound** (a fresh launch leaves the
+    editor empty and unbound), the edit belongs to no note and the saver would
+    silently drop it — so navigating away discarded it (issue #90). To prevent
+    that, the first such keystroke emits :attr:`orphan_edit_detected` so a UI
+    owner (``MainWindow``) can create a note and bind it *before* the edit is
+    recorded; from then on the normal debounced-save / save-on-switch path
+    protects the text.
     """
+
+    #: Emitted with the current editor text when an edit arrives while no note is
+    #: bound. A connected slot is expected to create a note and bind it (via
+    #: :meth:`AutoSaver.load`) synchronously, so the edit that follows is tracked.
+    orphan_edit_detected = Signal(str)
 
     def __init__(
         self,
@@ -75,7 +88,14 @@ class AutoSaveController(QObject):
         self._editor.set_markdown(note.body)
 
     def _on_text_changed(self) -> None:
-        self.saver.edit(self._editor.markdown())
+        text = self._editor.markdown()
+        # An edit with no note bound is an "orphan": ask the UI to create and
+        # bind a note for it first (a connected slot calls saver.load
+        # synchronously), so the edit below is recorded against a real note
+        # instead of being dropped (issue #90). Empty text isn't worth a note.
+        if text and self.saver.note_id is None:
+            self.orphan_edit_detected.emit(text)
+        self.saver.edit(text)
 
     def _on_tick(self) -> None:
         self.saver.flush_if_due()

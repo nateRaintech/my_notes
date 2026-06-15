@@ -475,6 +475,9 @@ class MainWindow(QMainWindow):
         self.autosave = AutoSaveController(
             self.editor, repository, debounce=debounce, parent=self
         )
+        # Create-on-type: if the user types while no note is loaded, create one
+        # to hold the text so it can't be lost on the next navigation (issue #90).
+        self.autosave.orphan_edit_detected.connect(self._on_orphan_edit)
         self._populate_notebook_tree()
         return self.autosave
 
@@ -852,6 +855,40 @@ class MainWindow(QMainWindow):
         note = current.data(Qt.ItemDataRole.UserRole)
         if note is not None:
             self.load_note(note)
+
+    def _on_orphan_edit(self, _text: str) -> None:
+        """Back the in-progress text with a real note when none is loaded.
+
+        Fired by :attr:`AutoSaveController.orphan_edit_detected` on the first
+        keystroke into an unbound editor (fresh launch, post-lock rebind, or
+        after deleting the open note). Creates a note in the current view's
+        notebook and binds it to the saver with a blank baseline — the saver
+        records the just-typed text as a pending edit immediately after this
+        returns, so the normal debounced-save / save-on-switch path then keeps
+        it safe (issue #90).
+
+        The editor text is deliberately left untouched: the note is selected in
+        the list with signals blocked so the selection does not run
+        :meth:`load_note`, which would overwrite what the user is typing.
+        """
+        if self.repository is None or self.autosave is None:
+            return
+        note = self.repository.create_note(notebook_id=self.current_notebook_id)
+        # Baseline blank; the edit that follows in the controller marks it dirty.
+        self.autosave.saver.load(note.id, "")
+        # A tag filter would hide the (untagged) new note — drop to All Notes,
+        # mirroring new_note(), so it stays visible.
+        if self.current_tag_id is not None:
+            self._select_all_notes()
+        self.search_input.blockSignals(True)
+        self.search_input.clear()
+        self.search_input.blockSignals(False)
+        self.refresh_notes()
+        # Select the row without triggering load_note (which would clobber the
+        # text now living in the editor and saver).
+        self.note_list.blockSignals(True)
+        self._select_note(note.id)
+        self.note_list.blockSignals(False)
 
     def new_note(self) -> Note | None:
         """Create a new, empty note in the current view and open it for editing."""
