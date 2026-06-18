@@ -853,8 +853,25 @@ class MainWindow(QMainWindow):
         if current is None:
             return
         note = current.data(Qt.ItemDataRole.UserRole)
-        if note is not None:
-            self.load_note(note)
+        if note is None:
+            return
+        # The row holds a Note snapshot frozen at populate time, but autosave may
+        # have written a newer body to the vault since (e.g. a note that was empty
+        # when listed now holds text). Re-read it from the repository so we open
+        # what is actually saved, not a stale — possibly empty — cached body.
+        if self.repository is not None:
+            fresh = self.repository.get_note(note.id)
+            if fresh is not None:
+                note = fresh
+        self.load_note(note)
+        # load_note flushed the note we navigated away from; its list row (title)
+        # is now stale — e.g. an auto-created note that listed as "Untitled" now
+        # has a real title. Refresh so the list matches the vault, keeping the
+        # note we just opened selected (signals blocked to avoid re-entry here).
+        self.note_list.blockSignals(True)
+        self.refresh_notes()
+        self._select_note(note.id)
+        self.note_list.blockSignals(False)
 
     def _on_orphan_edit(self, _text: str) -> None:
         """Back the in-progress text with a real note when none is loaded.
