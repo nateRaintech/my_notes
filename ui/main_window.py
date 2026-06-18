@@ -864,14 +864,34 @@ class MainWindow(QMainWindow):
             if fresh is not None:
                 note = fresh
         self.load_note(note)
-        # load_note flushed the note we navigated away from; its list row (title)
-        # is now stale — e.g. an auto-created note that listed as "Untitled" now
-        # has a real title. Refresh so the list matches the vault, keeping the
-        # note we just opened selected (signals blocked to avoid re-entry here).
-        self.note_list.blockSignals(True)
-        self.refresh_notes()
-        self._select_note(note.id)
-        self.note_list.blockSignals(False)
+        # load_note flushed the note we just left; only THAT row's title can have
+        # changed (e.g. an auto-created note that listed as "Untitled" now has a
+        # real title). Update it in place. Rebuilding the whole list here was an
+        # O(all-notes) re-query on *every* click AND re-entrant — refresh_notes
+        # reset the current row, re-firing this handler in a recursive spiral that
+        # froze large vaults (issue #92). An in-place row update emits itemChanged,
+        # not currentItemChanged, so it neither rebuilds nor re-enters.
+        self._refresh_list_row(previous)
+
+    def _refresh_list_row(self, item: QListWidgetItem | None) -> None:
+        """Re-sync one note-list row's label and cached snapshot from the vault.
+
+        The cheap O(1) counterpart to :meth:`refresh_notes`, for when only a
+        single row can have gone stale — e.g. after navigating away from a note
+        that auto-save just flushed. Updates the item's stored ``Note`` and its
+        text in place; this emits ``itemChanged`` (not ``currentItemChanged``),
+        so it does not re-enter :meth:`_on_note_selected`.
+        """
+        if item is None or self.repository is None:
+            return
+        snapshot = item.data(Qt.ItemDataRole.UserRole)
+        if snapshot is None:
+            return
+        fresh = self.repository.get_note(snapshot.id)
+        if fresh is None:
+            return
+        item.setData(Qt.ItemDataRole.UserRole, fresh)
+        item.setText(fresh.title.strip() or derive_title(fresh.body))
 
     def _on_orphan_edit(self, _text: str) -> None:
         """Back the in-progress text with a real note when none is loaded.

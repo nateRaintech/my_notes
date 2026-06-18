@@ -302,3 +302,27 @@ def test_autocreated_note_shows_its_title_in_the_list_after_navigating(qapp, rep
     labels = [window.note_list.item(i).text() for i in range(window.note_list.count())]
     assert "Buy milk" in labels
     assert "Untitled" not in labels
+
+
+def test_selecting_a_note_does_not_rebuild_the_whole_list(qapp, repo):
+    """Selection must be cheap: no full list re-query/rebuild per click.
+
+    Rebuilding every row on each selection froze the app on real-sized vaults.
+    Navigating refreshes only the row we left (its title may have changed), never
+    the entire list.
+    """
+    a = repo.create_note(title="A", body="a body")
+    b = repo.create_note(title="B", body="b body")
+    window = MainWindow()
+    window.bind_autosave(repo)
+    window.refresh_notes()
+
+    rebuilds: list = []
+    original = window._populate_note_list
+    window._populate_note_list = lambda notes: (rebuilds.append(notes), original(notes))[1]
+
+    window._select_note(a.id)
+    window._select_note(b.id)
+    window._select_note(a.id)
+
+    assert rebuilds == []  # navigation never repopulates the full list
