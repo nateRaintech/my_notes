@@ -241,3 +241,88 @@ def test_typing_in_new_note_does_not_create_a_second_note(qapp, repo):
     window.editor.source.setPlainText("groceries and milk")
 
     assert len(repo.list_notes()) == 1
+
+
+def test_reopening_an_autocreated_note_shows_its_saved_text(qapp, repo):
+    """The exact user symptom: an auto-created note re-opens EMPTY.
+
+    Typing cold creates a note and autosave writes the text to the vault, but the
+    note list row still holds the empty snapshot captured at creation. Clicking
+    that row must show the text that was saved, not the stale empty body.
+    """
+    existing = repo.create_note(title="Old", body="old body")
+    window = MainWindow()
+    window.bind_autosave(repo)
+    window.refresh_notes()
+
+    window.editor.source.setPlainText("brand new idea")
+    new_id = window.autosave.saver.note_id
+
+    # Navigate away (flushes the new note to the vault), then click back onto it.
+    window._select_note(existing.id)
+    window._select_note(new_id)
+
+    assert window.editor.markdown() == "brand new idea"
+
+
+def test_reselecting_an_edited_note_shows_current_body_not_stale_snapshot(qapp, repo):
+    """General staleness: re-clicking any edited note must show the saved body.
+
+    The note list caches a Note snapshot per row; an autosave updates the vault
+    without refreshing that snapshot, so selection must read fresh from the repo.
+    """
+    a = repo.create_note(title="A", body="a body")
+    b = repo.create_note(title="B", body="b body")
+    window = MainWindow()
+    window.bind_autosave(repo)
+    window.refresh_notes()
+
+    window._select_note(a.id)
+    window.editor.source.setPlainText("a body edited")  # pending edit on A
+    window._select_note(b.id)  # flushes A to the vault
+    window._select_note(a.id)  # re-open A
+
+    assert window.editor.markdown() == "a body edited"
+
+
+def test_autocreated_note_shows_its_title_in_the_list_after_navigating(qapp, repo):
+    """The auto-created note must list under its derived title, not "Untitled".
+
+    It is created empty (listed as "Untitled"); once typing fills it and the user
+    navigates away (flushing it), the list should reflect the saved title.
+    """
+    existing = repo.create_note(title="Old", body="old body")
+    window = MainWindow()
+    window.bind_autosave(repo)
+    window.refresh_notes()
+
+    window.editor.source.setPlainText("Buy milk\n\nand eggs")
+    window._select_note(existing.id)  # flush the new note + navigate away
+
+    labels = [window.note_list.item(i).text() for i in range(window.note_list.count())]
+    assert "Buy milk" in labels
+    assert "Untitled" not in labels
+
+
+def test_selecting_a_note_does_not_rebuild_the_whole_list(qapp, repo):
+    """Selection must be cheap: no full list re-query/rebuild per click.
+
+    Rebuilding every row on each selection froze the app on real-sized vaults.
+    Navigating refreshes only the row we left (its title may have changed), never
+    the entire list.
+    """
+    a = repo.create_note(title="A", body="a body")
+    b = repo.create_note(title="B", body="b body")
+    window = MainWindow()
+    window.bind_autosave(repo)
+    window.refresh_notes()
+
+    rebuilds: list = []
+    original = window._populate_note_list
+    window._populate_note_list = lambda notes: (rebuilds.append(notes), original(notes))[1]
+
+    window._select_note(a.id)
+    window._select_note(b.id)
+    window._select_note(a.id)
+
+    assert rebuilds == []  # navigation never repopulates the full list
