@@ -106,12 +106,12 @@ END;
 """
 
 # Migration 2 — encrypted key-value secret store.
-#   app_secrets  holds small named secrets (e.g. the AI API key). A single row
-#                per name; INSERT OR REPLACE is the upsert idiom. Protected at
-#                rest because the whole SQLCipher database is encrypted; the
-#                value is stored verbatim and never exposed to the UI.
-#                CREATE TABLE IF NOT EXISTS makes this idempotent and safe for
-#                existing vaults that are opened against this schema version.
+#   app_secrets  once held the AI inference API key. The AI features were removed
+#                (issue #96), so nothing writes or reads this table any more, but
+#                the migration is retained: migrations are forward-only and must
+#                never be un-shipped, since vaults in the field have already
+#                applied it. The empty table is harmless. CREATE TABLE IF NOT
+#                EXISTS keeps it idempotent for existing vaults.
 _MIGRATION_2 = """
 CREATE TABLE IF NOT EXISTS app_secrets (
     name   TEXT PRIMARY KEY,

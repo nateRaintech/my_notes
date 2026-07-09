@@ -22,7 +22,7 @@ import base64
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QByteArray, QEvent, QPoint, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QByteArray, QEvent, QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QDialog,
@@ -47,9 +47,6 @@ from core.notebooks import build_notebook_tree, would_create_cycle
 from core.settings import DEFAULT_SETTINGS, save_settings
 from core.text import count_words, derive_title
 from core.theme import DEFAULT_THEME, load_stylesheet
-from ui.ai_chat import AiChatPanel
-from ui.ai_worker import AiWorker
-from ui.api_key_dialog import APIKeyDialog
 from ui.import_wizard import ImportWizard
 from ui.quick_switcher import QuickSwitcher
 from ui.settings_dialog import SettingsDialog
@@ -145,12 +142,6 @@ class MainWindow(QMainWindow):
         self.current_notebook_id: int | None = None
         self.current_tag_id: int | None = None
         self._minimize_locked = False
-        # Strong references to in-flight AI (worker, thread) pairs. A worker moved
-        # to a QThread has no parent (you can't parent across threads), so without
-        # holding it here it is garbage-collected the instant the launching method
-        # returns — before `thread.started -> worker.run` ever fires (issue #85).
-        # Pairs are discarded on thread.finished (see _make_ai_worker).
-        self._ai_jobs: set = set()
 
         # Persisted settings. Until configure_settings() binds a real settings
         # location the window runs on defaults and nothing is written to disk.
@@ -228,15 +219,6 @@ class MainWindow(QMainWindow):
         self.dock_preview.setWidget(self.preview)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock_preview)
 
-        # AI Chat dock (right, hidden by default).
-        self.ai_chat_panel = AiChatPanel()
-        self.dock_ai_chat = QDockWidget("AI Chat", self)
-        self.dock_ai_chat.setObjectName("dock_ai_chat")
-        self.dock_ai_chat.setFeatures(_dock_features)
-        self.dock_ai_chat.setWidget(self.ai_chat_panel)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock_ai_chat)
-        self.dock_ai_chat.hide()
-
         # --- Signals ---------------------------------------------------------
 
         self.search_input.textChanged.connect(self._on_search_changed)
@@ -310,11 +292,6 @@ class MainWindow(QMainWindow):
         self.toggle_preview_action.setShortcut(QKeySequence("Ctrl+Shift+4"))
         view_menu.addAction(self.toggle_preview_action)
 
-        # AI Chat dock toggle — Ctrl+Shift+5.
-        self.toggle_ai_chat_action = self.dock_ai_chat.toggleViewAction()
-        self.toggle_ai_chat_action.setShortcut(QKeySequence("Ctrl+Shift+5"))
-        view_menu.addAction(self.toggle_ai_chat_action)
-
         view_menu.addSeparator()
         self.focus_mode_action = view_menu.addAction("Focus mode")
         self.focus_mode_action.setCheckable(True)
@@ -322,22 +299,6 @@ class MainWindow(QMainWindow):
         self.focus_mode_action.triggered.connect(
             lambda checked: self.set_focus_mode(checked)
         )
-
-        # AI menu — items are disabled when the vault is locked (no repository).
-        self._ai_menu = self.menuBar().addMenu("&AI")
-        self.set_api_key_action = self._ai_menu.addAction("Set API key…")
-        self.set_api_key_action.triggered.connect(self.open_api_key_dialog)
-        self.test_connection_action = self._ai_menu.addAction("Test connection")
-        self.test_connection_action.triggered.connect(self.open_test_connection)
-        self.chat_action = self._ai_menu.addAction("Chat")
-        self.chat_action.triggered.connect(self.open_ai_chat)
-        self._ai_menu.addSeparator()
-        self.analyze_text_action = self._ai_menu.addAction("Analyze text with AI")
-        self.analyze_text_action.triggered.connect(self.analyze_selection)
-        # Always enabled; analyze_selection guards on an open tab + a selection.
-        self.analyze_text_action.setEnabled(True)
-        self.analyze_note_action = self._ai_menu.addAction("Analyze note with AI")
-        self.analyze_note_action.triggered.connect(self.analyze_note)
 
         # --- Status bar ------------------------------------------------------
 
@@ -1091,7 +1052,6 @@ class MainWindow(QMainWindow):
             "Move to notebook…", lambda *_: self._prompt_move_note(note)
         )
         menu.addAction("Tags…", lambda *_: self.open_tag_editor(note))
-        menu.addAction("Analyze note with AI", lambda *_: self.analyze_note(note))
         menu.addAction("Delete", lambda *_: self._prompt_delete_note(note))
         menu.exec(self.note_list.viewport().mapToGlobal(pos))
 
@@ -1135,275 +1095,3 @@ class MainWindow(QMainWindow):
         )
         if reply == QMessageBox.StandardButton.Yes:
             self.delete_note(note.id)
-
-    # -------------------------------------------------------------------------
-    # AI menu
-    # -------------------------------------------------------------------------
-
-    def open_api_key_dialog(self) -> None:
-        """Open the API-key dialog; no-op when the vault is locked."""
-        dialog = self._make_api_key_dialog()
-        if dialog is None:
-            self.statusBar().showMessage("Vault is locked — unlock first.")
-            return
-        dialog.exec()
-
-    def _make_api_key_dialog(self) -> "APIKeyDialog | None":
-        """Return a new APIKeyDialog, or None if the vault is locked.
-
-        Test seam: call this instead of open_api_key_dialog to get the
-        dialog object without running the modal event loop.
-        """
-        if self.repository is None:
-            return None
-        return APIKeyDialog(self.repository, parent=self)
-
-    def open_test_connection(self) -> None:
-        """Test the stored API key on a background thread; show result in a message box."""
-        if self.repository is None:
-            self.statusBar().showMessage("Vault is locked — unlock first.")
-            return
-        if not self.repository.has_api_key():
-            QMessageBox.warning(self, "AI", "No API key stored. Set one via AI → Set API key…")
-            return
-        api_key = self.repository.get_api_key()
-        assert api_key is not None  # guarded by has_api_key() above
-        worker, thread = self._make_ai_worker(
-            api_key, [{"role": "user", "content": "Reply with OK"}]
-        )
-        self.statusBar().showMessage("Testing connection…")
-        self.test_connection_action.setEnabled(False)
-
-        def on_reply(reply: str) -> None:
-            self.statusBar().showMessage("Connection OK")
-            self.test_connection_action.setEnabled(True)
-            QMessageBox.information(self, "AI connection", f"Connection successful.\nReply: {reply}")
-
-        def on_error(message: str) -> None:
-            self.statusBar().showMessage("Connection failed")
-            self.test_connection_action.setEnabled(True)
-            QMessageBox.warning(self, "AI connection", f"Connection failed:\n{message}")
-
-        # These callbacks call QMessageBox, so they MUST run on the GUI thread.
-        # Stash them on the worker and connect its signals to the window's
-        # bound-method slots, which Qt queues to the main thread (#87).
-        worker._main_on_reply = on_reply
-        worker._main_on_error = on_error
-        worker.finished.connect(self._on_ai_finished)
-        worker.error.connect(self._on_ai_error)
-        thread.started.connect(worker.run)
-        thread.start()
-
-    def open_ai_chat(self) -> None:
-        """Show and raise the AI Chat dock, then focus its input field.
-
-        Wires the run-chat and save-note seams into the panel on first call
-        (idempotent: the panel checks for None seams itself).
-        """
-        self._wire_ai_chat_seams()
-        self.dock_ai_chat.show()
-        self.dock_ai_chat.raise_()
-        self.ai_chat_panel.input_edit.setFocus()
-
-    def _wire_ai_chat_seams(self) -> None:
-        """Inject run-chat and save-note callbacks into the panel.
-
-        Called lazily from :meth:`open_ai_chat` so the panel is testable
-        without a live repository.  Seams are replaced on every call; because
-        they close over ``self``, they always see the latest repository state.
-        """
-        self.ai_chat_panel.run_chat_fn = self._send_chat
-        self.ai_chat_panel.save_note_fn = self._save_chat_note
-
-    def _send_chat(self, messages: list[dict]) -> None:
-        """Run-chat seam: spin an AiWorker for the chat panel.
-
-        Guards for a locked vault (``self.repository is None``) and a missing
-        API key, showing appropriate status messages instead of crashing.
-        """
-        if self.repository is None:
-            self.ai_chat_panel.status_label.setText(
-                "Vault is locked — unlock the vault first."
-            )
-            self.ai_chat_panel._set_thinking(False)
-            return
-        if not self.repository.has_api_key():
-            self.ai_chat_panel.status_label.setText(
-                "No API key stored. Set one via AI → Set API key…"
-            )
-            self.ai_chat_panel._set_thinking(False)
-            return
-
-        api_key = self.repository.get_api_key()
-        assert api_key is not None  # guarded by has_api_key() above
-
-        worker, thread = self._make_ai_worker(api_key, messages)
-
-        # The panel updates touch widgets, so they MUST run on the GUI thread.
-        # Route results through the window's bound-method slots (queued to the
-        # main thread); connecting closures would run on the worker thread (#87).
-        worker._main_on_reply = self.ai_chat_panel._on_reply
-        worker._main_on_error = self.ai_chat_panel._on_error
-        worker.finished.connect(self._on_ai_finished)
-        worker.error.connect(self._on_ai_error)
-        thread.started.connect(worker.run)
-        thread.start()
-
-    def _save_chat_note(self, markdown: str) -> None:
-        """Save-note seam: create a note from the conversation Markdown.
-
-        Guards for a locked vault; shows a status-bar confirmation on success.
-        """
-        if self.repository is None:
-            self.statusBar().showMessage("Vault is locked — unlock first.")
-            return
-        self.repository.create_note(
-            notebook_id=self.current_notebook_id,
-            title="AI Chat",
-            body=markdown,
-        )
-        self.refresh_notes()
-        self.statusBar().showMessage("Chat saved as note.")
-
-    def analyze_selection(self) -> None:
-        """Seed the AI chat with the currently selected editor text.
-
-        Reads the selection from the editor source, converts Qt's paragraph
-        separator (U+2029 and U+2028) back to newlines, asks for an optional
-        prompt via :meth:`_ask_analysis_prompt`, then opens the AI chat and
-        calls :meth:`~ui.ai_chat.AiChatPanel.start_with_context`.
-
-        No-op (with a status message) if:
-        * nothing is selected in the editor,
-        * the vault is locked (``self.repository is None``),
-        * the vault has no API key, or
-        * the user cancels the prompt dialog.
-        """
-        tab = self.tabbed_editor.active_tab
-        selected = tab.source.textCursor().selectedText() if tab is not None else ""
-        # Qt uses U+2029 (PARAGRAPH SEPARATOR) between paragraphs and U+2028
-        # (LINE SEPARATOR) for soft line-breaks — convert both to plain newlines.
-        selected = selected.replace(" ", "\n").replace(" ", "\n")
-        if not selected.strip():
-            self.statusBar().showMessage("No text selected — select text first.")
-            return
-        if self.repository is None:
-            self.statusBar().showMessage("Vault is locked — unlock the vault first.")
-            return
-        if not self.repository.has_api_key():
-            self.statusBar().showMessage("No API key stored. Set one via AI → Set API key…")
-            return
-        prompt = self._ask_analysis_prompt()
-        if prompt is None:
-            return
-        self.open_ai_chat()
-        self.ai_chat_panel.start_with_context(selected, prompt)
-
-    def analyze_note(self, note=None) -> None:
-        """Seed the AI chat with the body of a note.
-
-        ``note`` defaults to the currently selected item in the note list.
-
-        No-op (with a status message) if:
-        * no note is provided and none is selected,
-        * the vault is locked,
-        * the vault has no API key, or
-        * the user cancels the prompt dialog.
-        """
-        if note is None:
-            item = self.note_list.currentItem()
-            if item is None:
-                self.statusBar().showMessage("No note selected — select a note first.")
-                return
-            note = item.data(Qt.ItemDataRole.UserRole)
-        if note is None:
-            self.statusBar().showMessage("No note selected — select a note first.")
-            return
-        if self.repository is None:
-            self.statusBar().showMessage("Vault is locked — unlock the vault first.")
-            return
-        if not self.repository.has_api_key():
-            self.statusBar().showMessage("No API key stored. Set one via AI → Set API key…")
-            return
-        prompt = self._ask_analysis_prompt()
-        if prompt is None:
-            return
-        self.open_ai_chat()
-        self.ai_chat_panel.start_with_context(note.body, prompt)
-
-    def _ask_analysis_prompt(self) -> str | None:
-        """Ask the user for an optional analysis prompt via a dialog.
-
-        Returns the entered text (possibly blank — blank means "summarize"),
-        or ``None`` if the user clicked Cancel.
-
-        This is the monkeypatchable seam for tests: replace it with a lambda
-        that returns a fixed string (or ``None``) to bypass the modal dialog.
-        """
-        text, ok = QInputDialog.getMultiLineText(
-            self,
-            "Analyze with AI",
-            "Optional prompt (leave blank to summarise):",
-            "",
-        )
-        if not ok:
-            return None
-        return text
-
-    def _make_ai_worker(
-        self,
-        api_key: str,
-        messages: list[dict],
-        *,
-        timeout: float = 120.0,
-    ) -> "tuple[AiWorker, QThread]":
-        """Create and wire an AiWorker on a new thread.
-
-        Test seam: call this to get the worker and thread objects without
-        triggering a real network call; monkeypatch worker.run or call
-        worker.run_with(mock_fn) directly.
-
-        Returns (worker, thread) — the worker has been moved to the thread
-        but the thread has NOT been started yet.
-        """
-        thread = QThread(self)
-        worker = AiWorker(api_key, messages, timeout=timeout)
-        worker.moveToThread(thread)
-        worker._thread = thread  # the result slots (_on_ai_finished/_error) quit it
-        # Keep a strong reference to the (worker, thread) pair so neither is
-        # garbage-collected mid-flight. The thread is parented to the window, but
-        # the worker has no parent (moveToThread forbids one), so without this it
-        # would be collected the moment the caller returns and `worker.run` would
-        # never fire (issue #85). Release the pair once the thread finishes.
-        job = (worker, thread)
-        self._ai_jobs.add(job)
-        thread.finished.connect(lambda: self._ai_jobs.discard(job))
-        thread.finished.connect(thread.deleteLater)
-        return worker, thread
-
-    def _on_ai_finished(self, reply: str) -> None:
-        """Main-thread slot for ``AiWorker.finished``; dispatches the per-call callback.
-
-        Connecting ``worker.finished`` to this **bound method of the (main-thread)
-        window** makes Qt deliver it on the GUI thread via a queued connection — so
-        the per-call ``_main_on_reply`` callback (which touches widgets / dialogs)
-        runs on the GUI thread. Connecting closures directly delivered on the worker
-        thread and crashed the app (#87).
-        """
-        worker = self.sender()
-        callback = getattr(worker, "_main_on_reply", None)
-        if callback is not None:
-            callback(reply)
-        thread = getattr(worker, "_thread", None)
-        if thread is not None:
-            thread.quit()
-
-    def _on_ai_error(self, message: str) -> None:
-        """Main-thread slot for ``AiWorker.error`` — see :meth:`_on_ai_finished`."""
-        worker = self.sender()
-        callback = getattr(worker, "_main_on_error", None)
-        if callback is not None:
-            callback(message)
-        thread = getattr(worker, "_thread", None)
-        if thread is not None:
-            thread.quit()
