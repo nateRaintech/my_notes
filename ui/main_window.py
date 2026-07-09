@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QTextEdit,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -49,11 +50,10 @@ from core.theme import DEFAULT_THEME, load_stylesheet
 from ui.ai_chat import AiChatPanel
 from ui.ai_worker import AiWorker
 from ui.api_key_dialog import APIKeyDialog
-from ui.autosave import AutoSaveController
-from ui.editor import MarkdownEditor
 from ui.import_wizard import ImportWizard
 from ui.quick_switcher import QuickSwitcher
 from ui.settings_dialog import SettingsDialog
+from ui.tabbed_editor import TabbedEditor
 from ui.tag_editor import TagEditorDialog
 
 if TYPE_CHECKING:
@@ -83,6 +83,11 @@ _SIDEBAR_MIN_WIDTH = 140
 _NOTE_LIST_MIN_WIDTH = 180
 # Minimum width for the editor source (central widget).
 _EDITOR_MIN_WIDTH = 240
+
+
+def _title_for_note(note) -> str:
+    """The list/tab display title for ``note``: its title, else derived from body."""
+    return note.title.strip() or derive_title(note.body)
 
 
 class MainWindow(QMainWindow):
@@ -135,8 +140,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(WINDOW_TITLE)
         self.resize(*DEFAULT_SIZE)
 
-        # No repository until a vault is opened; auto-save is bound later.
-        self.autosave: AutoSaveController | None = None
+        # No repository until a vault is opened; tabs are bound later.
         self.repository: Repository | None = None
         self.current_notebook_id: int | None = None
         self.current_tag_id: int | None = None
@@ -181,12 +185,17 @@ class MainWindow(QMainWindow):
         _notelist_layout.addWidget(self.search_input)
         _notelist_layout.addWidget(self.note_list)
 
-        self.editor = MarkdownEditor()
+        # --- Central widget: tabbed editor -----------------------------------
+        # One tab per open note; the repository is wired in later by
+        # bind_autosave, so until then no tabs can open (empty placeholder shows).
+        self.tabbed_editor = TabbedEditor()
+        self.tabbed_editor.setMinimumWidth(_EDITOR_MIN_WIDTH)
+        self.setCentralWidget(self.tabbed_editor)
 
-        # --- Central widget: editor source -----------------------------------
-
-        self.editor.source.setMinimumWidth(_EDITOR_MIN_WIDTH)
-        self.setCentralWidget(self.editor.source)
+        # Shared Markdown preview (in a dock); always renders the active tab.
+        self.preview = QTextEdit()
+        self.preview.setReadOnly(True)
+        self.preview.setMinimumWidth(_EDITOR_MIN_WIDTH)
 
         # --- Dock widgets ----------------------------------------------------
 
@@ -216,7 +225,7 @@ class MainWindow(QMainWindow):
         self.dock_preview = QDockWidget("Preview", self)
         self.dock_preview.setObjectName("dock_preview")
         self.dock_preview.setFeatures(_dock_features)
-        self.dock_preview.setWidget(self.editor.preview)
+        self.dock_preview.setWidget(self.preview)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock_preview)
 
         # AI Chat dock (right, hidden by default).
@@ -250,6 +259,11 @@ class MainWindow(QMainWindow):
         self.focus_editor_shortcut.activated.connect(self.focus_editor)
         self.focus_search_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
         self.focus_search_shortcut.activated.connect(self.focus_search)
+
+        self.close_tab_shortcut = QShortcut(QKeySequence("Ctrl+W"), self)
+        self.close_tab_shortcut.activated.connect(
+            lambda: self.tabbed_editor.close_tab(self.tabbed_editor.active_tab)
+        )
 
         # --- Menus -----------------------------------------------------------
 
@@ -315,9 +329,8 @@ class MainWindow(QMainWindow):
         self._ai_menu.addSeparator()
         self.analyze_text_action = self._ai_menu.addAction("Analyze text with AI")
         self.analyze_text_action.triggered.connect(self.analyze_selection)
-        # Enable only when there is a selection; also guarded at trigger time.
-        self.editor.source.copyAvailable.connect(self.analyze_text_action.setEnabled)
-        self.analyze_text_action.setEnabled(False)
+        # Always enabled; analyze_selection guards on an open tab + a selection.
+        self.analyze_text_action.setEnabled(True)
         self.analyze_note_action = self._ai_menu.addAction("Analyze note with AI")
         self.analyze_note_action.triggered.connect(self.analyze_note)
 
@@ -325,12 +338,49 @@ class MainWindow(QMainWindow):
 
         self.word_count_label = QLabel()
         self.statusBar().addPermanentWidget(self.word_count_label)
-        self.editor.source.textChanged.connect(self._update_word_count)
+        self.tabbed_editor.active_tab_changed.connect(self._on_active_tab_changed)
+        self.tabbed_editor.tab_text_changed.connect(self._on_active_text_changed)
         self._update_word_count()
 
         self.statusBar().showMessage("Ready")
 
         self.apply_theme(DEFAULT_THEME)
+
+    # -------------------------------------------------------------------------
+    # Active-tab compatibility shims + preview/word-count wiring
+    # -------------------------------------------------------------------------
+
+    @property
+    def editor(self):
+        """The active tab's editing surface, or ``None`` when no note is open.
+
+        Compatibility shim: the app used to have a single ``editor``. Callers and
+        tests that reach ``window.editor.source`` / ``.markdown()`` /
+        ``.set_markdown()`` now get the active tab (which exposes the same seam).
+        """
+        return self.tabbed_editor.active_tab
+
+    @property
+    def autosave(self):
+        """The active tab's auto-save controller, or ``None`` when no tab is open."""
+        tab = self.tabbed_editor.active_tab
+        return tab._controller if tab is not None else None
+
+    def _on_active_tab_changed(self) -> None:
+        self._render_preview()
+        self._update_word_count()
+
+    def _on_active_text_changed(self) -> None:
+        self._render_preview()
+        self._update_word_count()
+
+    def _render_preview(self) -> None:
+        """Render the active tab's Markdown into the shared preview (blank if none)."""
+        self.preview.setMarkdown(self._active_markdown())
+
+    def _active_markdown(self) -> str:
+        tab = self.tabbed_editor.active_tab
+        return tab.markdown() if tab is not None else ""
 
     # -------------------------------------------------------------------------
     # Focus mode
@@ -469,27 +519,30 @@ class MainWindow(QMainWindow):
         repository: Repository,
         *,
         debounce: float = DEFAULT_DEBOUNCE_SECONDS,
-    ) -> AutoSaveController:
-        """Attach debounced auto-save to the editor, backed by ``repository``."""
+    ) -> TabbedEditor:
+        """Wire ``repository`` into the tabbed editor so each opened tab auto-saves.
+
+        Each :class:`~ui.note_tab.NoteTab` builds its own auto-saver over this
+        repository, so debounced save, create-on-type (#90), and fetch-fresh-on-open
+        (#92) all apply per tab. Returns the tabbed editor (was: a controller).
+        """
         self.repository = repository
-        self.autosave = AutoSaveController(
-            self.editor, repository, debounce=debounce, parent=self
-        )
-        # Create-on-type: if the user types while no note is loaded, create one
-        # to hold the text so it can't be lost on the next navigation (issue #90).
-        self.autosave.orphan_edit_detected.connect(self._on_orphan_edit)
+        self.tabbed_editor.set_repository(repository)
+        self.tabbed_editor._debounce = debounce
+        # Create-on-type: typing into a fresh, unbound tab creates a note to hold
+        # the text so it can't be lost on the next navigation (issue #90).
+        self.tabbed_editor.tab_orphan_edit.connect(self._on_tab_orphan_edit)
         self._populate_notebook_tree()
-        return self.autosave
+        return self.tabbed_editor
 
     def load_note(self, note: Note) -> None:
-        """Load ``note`` into the editor for editing (and debounced auto-saving)."""
-        if self.autosave is None:
-            self.editor.set_markdown(note.body)
+        """Open ``note`` in a tab (focusing its tab if it is already open)."""
+        if self.repository is None:
             return
-        self.autosave.load_note(note)
+        self.tabbed_editor.open(note)
 
     def _update_word_count(self) -> None:
-        count = count_words(self.editor.markdown())
+        count = count_words(self._active_markdown())
         unit = "word" if count == 1 else "words"
         self.word_count_label.setText(f"{count} {unit}")
 
@@ -498,15 +551,15 @@ class MainWindow(QMainWindow):
     # -------------------------------------------------------------------------
 
     def flush_pending(self) -> None:
-        """Persist any pending auto-save edit immediately."""
-        if self.autosave is not None:
-            self.autosave.flush()
+        """Persist any pending auto-save edits across every open tab."""
+        self.tabbed_editor.flush_all()
 
     def lock_session(self) -> None:
         """Clear all decrypted content and detach the data layer after an auto-lock."""
-        if self.autosave is not None:
-            self.autosave.stop()
-        self.autosave = None
+        # Flush every tab's pending edit, then wipe all tabs (encrypted-vault
+        # requirement: no decrypted note text lingers after lock). clear_all
+        # flushes each tab before removing it.
+        self.tabbed_editor.clear_all()
         self.repository = None
         self.current_notebook_id = None
         self.current_tag_id = None
@@ -523,7 +576,6 @@ class MainWindow(QMainWindow):
         self.search_input.clear()
         self.search_input.blockSignals(False)
 
-        self.editor.set_markdown("")
         self.statusBar().showMessage("Vault locked")
 
     def changeEvent(self, event: QEvent) -> None:
@@ -560,8 +612,10 @@ class MainWindow(QMainWindow):
         self.note_list.setFocus()
 
     def focus_editor(self) -> None:
-        """Move keyboard focus to the editor's editable source pane (Ctrl+3)."""
-        self.editor.source.setFocus()
+        """Move keyboard focus to the active tab's editable source pane (Ctrl+3)."""
+        tab = self.tabbed_editor.active_tab
+        if tab is not None:
+            tab.source.setFocus()
 
     def focus_search(self) -> None:
         """Move keyboard focus to the search box and select its text (Ctrl+F)."""
@@ -893,26 +947,25 @@ class MainWindow(QMainWindow):
         item.setData(Qt.ItemDataRole.UserRole, fresh)
         item.setText(fresh.title.strip() or derive_title(fresh.body))
 
-    def _on_orphan_edit(self, _text: str) -> None:
-        """Back the in-progress text with a real note when none is loaded.
+    def _on_tab_orphan_edit(self, tab, _text: str) -> None:
+        """Back an unbound tab's first keystroke with a real note (issue #90).
 
-        Fired by :attr:`AutoSaveController.orphan_edit_detected` on the first
-        keystroke into an unbound editor (fresh launch, post-lock rebind, or
-        after deleting the open note). Creates a note in the current view's
-        notebook and binds it to the saver with a blank baseline — the saver
-        records the just-typed text as a pending edit immediately after this
-        returns, so the normal debounced-save / save-on-switch path then keeps
-        it safe (issue #90).
+        Fired via :attr:`TabbedEditor.tab_orphan_edit` on the first keystroke into
+        an unbound tab (a fresh blank tab). Creates a note in the current view's
+        notebook and binds it to *that tab's* saver with a blank baseline — the
+        saver records the just-typed text as a pending edit immediately after this
+        returns, so the normal debounced-save / save-on-switch path then keeps it
+        safe.
 
-        The editor text is deliberately left untouched: the note is selected in
-        the list with signals blocked so the selection does not run
-        :meth:`load_note`, which would overwrite what the user is typing.
+        The tab's text is deliberately left untouched: the note is selected in the
+        list with signals blocked so the selection does not open/replace a tab and
+        overwrite what the user is typing. The tab's title is synced to the note.
         """
-        if self.repository is None or self.autosave is None:
+        if self.repository is None:
             return
         note = self.repository.create_note(notebook_id=self.current_notebook_id)
         # Baseline blank; the edit that follows in the controller marks it dirty.
-        self.autosave.saver.load(note.id, "")
+        tab.bind_new_note(note)
         # A tag filter would hide the (untagged) new note — drop to All Notes,
         # mirroring new_note(), so it stays visible.
         if self.current_tag_id is not None:
@@ -921,14 +974,15 @@ class MainWindow(QMainWindow):
         self.search_input.clear()
         self.search_input.blockSignals(False)
         self.refresh_notes()
-        # Select the row without triggering load_note (which would clobber the
-        # text now living in the editor and saver).
+        # Select the row without opening a duplicate tab / clobbering the text now
+        # living in this tab and its saver.
         self.note_list.blockSignals(True)
         self._select_note(note.id)
         self.note_list.blockSignals(False)
+        self.tabbed_editor.set_tab_title(tab, _title_for_note(note))
 
     def new_note(self) -> Note | None:
-        """Create a new, empty note in the current view and open it for editing."""
+        """Create a new, empty note in the current view and open it in a tab."""
         if self.repository is None:
             return None
         note = self.repository.create_note(notebook_id=self.current_notebook_id)
@@ -938,7 +992,7 @@ class MainWindow(QMainWindow):
         if self.current_tag_id is not None:
             self._select_all_notes()
         self.refresh_notes()
-        self._select_note(note.id)
+        self._select_note(note.id)  # selection opens the tab via _on_note_selected
         self.focus_editor()
         return note
 
@@ -965,16 +1019,18 @@ class MainWindow(QMainWindow):
                 return
 
     def delete_note(self, note_id: int) -> bool:
-        """Delete a note from the vault and refresh the list."""
+        """Delete a note from the vault, close any tab open on it, and refresh."""
         if self.repository is None:
             return False
-        editing_deleted = (
-            self.autosave is not None and self.autosave.saver.note_id == note_id
-        )
+        tab = self.tabbed_editor.tab_for_note(note_id)
         deleted = self.repository.delete_note(note_id)
-        if deleted and editing_deleted:
-            self.autosave.saver.load(None)
-            self.editor.set_markdown("")
+        if deleted and tab is not None:
+            # Detach the tab from the now-deleted note BEFORE closing it. Closing
+            # flushes, and flushing a deleted row calls update_note on a missing
+            # id, which raises NotFoundError. Detaching (load(None)) makes the
+            # flush a no-op so the note stays gone.
+            tab._controller.saver.load(None)
+            self.tabbed_editor.close_tab(tab)
         self.refresh_notes()
         return deleted
 
@@ -1189,7 +1245,11 @@ class MainWindow(QMainWindow):
         * the vault has no API key, or
         * the user cancels the prompt dialog.
         """
-        selected = self.editor.source.textCursor().selectedText()
+        tab = self.tabbed_editor.active_tab
+        if tab is None:
+            self.statusBar().showMessage("No note open — open a note first.")
+            return
+        selected = tab.source.textCursor().selectedText()
         # Qt uses U+2029 (PARAGRAPH SEPARATOR) between paragraphs and U+2028
         # (LINE SEPARATOR) for soft line-breaks — convert both to plain newlines.
         selected = selected.replace(" ", "\n").replace(" ", "\n")

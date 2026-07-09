@@ -61,11 +61,14 @@ class TabbedEditor(QWidget):
         self._debounce = debounce
         self._clock = clock
 
+        # The tab we were last on, so we can flush it when the user switches away.
+        self._active_tab: NoteTab | None = None
+
         self._tabs = QTabWidget()
         self._tabs.setTabsClosable(True)
         self._tabs.setMovable(False)
         self._tabs.tabCloseRequested.connect(self._on_close_requested)
-        self._tabs.currentChanged.connect(lambda _i: self.active_tab_changed.emit())
+        self._tabs.currentChanged.connect(self._on_current_changed)
 
         self._placeholder = QLabel(_PLACEHOLDER_TEXT)
         self._placeholder.setEnabled(False)
@@ -168,6 +171,20 @@ class TabbedEditor(QWidget):
             lambda text, t=tab: self.tab_orphan_edit.emit(t, text)
         )
         return tab
+
+    def _on_current_changed(self, _index: int) -> None:
+        """Flush the tab being left behind, then announce the new active tab.
+
+        Switching away from a tab persists its pending edit immediately — the
+        same save-on-switch guarantee the single editor gave on note change. The
+        per-tab debounce timer would eventually save it anyway, but flushing here
+        keeps the note list's titles current the moment the user navigates.
+        """
+        new = self.active_tab
+        if self._active_tab is not None and self._active_tab is not new:
+            self._active_tab.flush()
+        self._active_tab = new
+        self.active_tab_changed.emit()
 
     def _on_tab_text_changed(self) -> None:
         if self.sender() is self.active_tab:

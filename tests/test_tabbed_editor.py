@@ -98,6 +98,17 @@ def test_clear_all_flushes_then_removes_every_tab(qapp, repo):
     assert repo.get_note(a.id).body == "a edited"  # flushed before wipe
 
 
+def test_switching_tabs_flushes_the_tab_left_behind(qapp, repo):
+    a = repo.create_note(title="A", body="a")
+    b = repo.create_note(title="B", body="b")
+    te = TabbedEditor(repo, debounce=DEBOUNCE)
+    ta = te.open(a)
+    ta.source.setPlainText("a edited")  # pending on A, debounce not elapsed
+    te.open(b)                          # switching away flushes A immediately
+
+    assert repo.get_note(a.id).body == "a edited"
+
+
 def test_active_tab_changed_fires_on_open_and_close(qapp, repo):
     a = repo.create_note(title="A", body="a")
     te = TabbedEditor(repo, debounce=DEBOUNCE)
