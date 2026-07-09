@@ -242,6 +242,20 @@ def test_typing_in_new_note_does_not_create_a_second_note(qapp, repo):
     assert len(repo.list_notes()) == 1
 
 
+def test_active_tab_title_follows_the_notes_first_line(qapp, repo):
+    window = MainWindow()
+    window.bind_autosave(repo)
+    window.refresh_notes()
+
+    window.new_note()  # opens a fresh tab, initially "Untitled"
+    tabs = window.tabbed_editor._tabs
+    assert tabs.tabText(tabs.currentIndex()) == "Untitled"
+
+    window.editor.source.setPlainText("# Shopping\n\nmilk and eggs")
+
+    assert tabs.tabText(tabs.currentIndex()) == "Shopping"
+
+
 def test_clicking_a_note_whose_tab_was_closed_reopens_it(qapp, repo):
     """Closing a tab (Ctrl+W) leaves its row selected; clicking it must reopen it.
 

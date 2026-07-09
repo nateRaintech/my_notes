@@ -378,6 +378,18 @@ class MainWindow(QMainWindow):
     def _on_active_text_changed(self) -> None:
         self._render_preview()
         self._update_word_count()
+        self._sync_active_tab_title()
+
+    def _sync_active_tab_title(self) -> None:
+        """Keep the active tab's label in step with its content as the user types.
+
+        The tab shows the same derived title the note list uses (first line, or
+        "Untitled" when empty), so a note titles itself live instead of sitting on
+        the "Untitled" it opened with.
+        """
+        tab = self.tabbed_editor.active_tab
+        if tab is not None:
+            self.tabbed_editor.set_tab_title(tab, derive_title(tab.markdown()))
 
     def _render_preview(self) -> None:
         """Render the active tab's Markdown into the shared preview (blank if none)."""
