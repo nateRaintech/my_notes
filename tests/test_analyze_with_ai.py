@@ -90,8 +90,13 @@ def _patch_prompt(window: MainWindow, return_value: str | None) -> None:
 
 
 def _set_selection(window: MainWindow, text: str) -> None:
-    """Put text into the editor and select it all."""
-    window.editor.set_markdown(text)
+    """Open a note holding ``text`` in a tab and select all of it.
+
+    The editor's editable source only exists once a note is open in a tab, so a
+    selection is set by opening a note over the window's bound repository.
+    """
+    note = window.repository.create_note(title="", body=text)
+    window.load_note(note)
     window.editor.source.selectAll()
 
 
@@ -112,10 +117,10 @@ def test_ai_menu_has_analyze_note_action(qapp):
     assert "Analyze note" in w.analyze_note_action.text()
 
 
-def test_analyze_text_action_disabled_by_default(qapp):
-    """No selection on startup → action is disabled."""
+def test_analyze_text_action_enabled_by_default(qapp):
+    """The action is always enabled; analyze_selection guards on an actual selection."""
     w = _make_window(qapp)
-    assert not w.analyze_text_action.isEnabled()
+    assert w.analyze_text_action.isEnabled()
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +153,7 @@ def test_analyze_selection_paragraph_sep_converted(qapp, repo_with_key):
 
     # Monkeypatch selectedText to return the Qt-encoded string directly.
     from unittest.mock import MagicMock
+    _set_selection(w, "seed")  # ensure a tab (and editable source) exists
     cursor = MagicMock()
     cursor.selectedText.return_value = fake_qt_text
     w.editor.source.textCursor = lambda: cursor
@@ -183,8 +189,8 @@ def test_analyze_selection_no_selection_no_call(qapp, repo_with_key):
     w = _make_wired_window(qapp, repo_with_key)
     calls = []
     w.ai_chat_panel.start_with_context = _mock_start_with_context(calls)
-    # Empty editor — no selection.
-    w.editor.set_markdown("")
+    # Empty note open — nothing selected.
+    _set_selection(w, "")
     _patch_prompt(w, "anything")
     w.analyze_selection()
     assert calls == []
@@ -192,7 +198,7 @@ def test_analyze_selection_no_selection_no_call(qapp, repo_with_key):
 
 def test_analyze_selection_no_selection_shows_status(qapp, repo_with_key):
     w = _make_wired_window(qapp, repo_with_key)
-    w.editor.set_markdown("")
+    _set_selection(w, "")
     _patch_prompt(w, "anything")
     w.analyze_selection()
     msg = w.statusBar().currentMessage().lower()
@@ -219,17 +225,18 @@ def test_analyze_selection_cancel_prompt_no_call(qapp, repo_with_key):
 # ---------------------------------------------------------------------------
 
 
-def test_analyze_selection_locked_vault_no_crash(qapp):
-    w = _make_window(qapp)
-    # No repository — vault locked.
+def test_analyze_selection_locked_vault_no_crash(qapp, repo):
+    w = _make_wired_window(qapp, repo)
     _set_selection(w, "Some text")
+    w.repository = None  # simulate a locked vault while a tab is still open
     _patch_prompt(w, "test")
     w.analyze_selection()  # must not raise
 
 
-def test_analyze_selection_locked_vault_shows_status(qapp):
-    w = _make_window(qapp)
+def test_analyze_selection_locked_vault_shows_status(qapp, repo):
+    w = _make_wired_window(qapp, repo)
     _set_selection(w, "Some text")
+    w.repository = None  # simulate a locked vault while a tab is still open
     _patch_prompt(w, "test")
     w.analyze_selection()
     msg = w.statusBar().currentMessage().lower()

@@ -159,7 +159,7 @@ def test_lock_for_minimize_flushes_locks_and_clears(qapp, tmp_path):
 
     assert vault.is_locked is True
     assert window.repository is None
-    assert window.editor.markdown() == ""
+    assert window.tabbed_editor.count() == 0  # all tabs wiped on lock
 
     # The pending edit was flushed before the vault locked: reopen and confirm.
     reopened = Vault(path)

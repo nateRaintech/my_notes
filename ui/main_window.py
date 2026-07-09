@@ -241,6 +241,11 @@ class MainWindow(QMainWindow):
 
         self.search_input.textChanged.connect(self._on_search_changed)
         self.note_list.currentItemChanged.connect(self._on_note_selected)
+        # currentItemChanged doesn't fire when the already-selected row is clicked,
+        # so clicking a note whose tab was closed (Ctrl+W) wouldn't reopen it.
+        # itemClicked fires on every click and open() is focus-or-create, so this
+        # reopens a closed tab without duplicating one on ordinary navigation.
+        self.note_list.itemClicked.connect(self._on_note_clicked)
         self.note_list.customContextMenuRequested.connect(self._show_note_menu)
 
         self.notebook_tree.currentItemChanged.connect(self._on_notebook_selected)
@@ -927,6 +932,23 @@ class MainWindow(QMainWindow):
         # not currentItemChanged, so it neither rebuilds nor re-enters.
         self._refresh_list_row(previous)
 
+    def _on_note_clicked(self, item: QListWidgetItem | None) -> None:
+        """Reopen a note when its (already-selected) row is clicked.
+
+        Complements :meth:`_on_note_selected`, which only fires on a *change* of
+        selection. Clicking the row of a note whose tab was closed (Ctrl+W) must
+        reopen it even though the selection did not change. Re-reads fresh so a
+        stale row snapshot never shows (#92); :meth:`TabbedEditor.open` is
+        focus-or-create, so this never duplicates a tab.
+        """
+        if item is None or self.repository is None:
+            return
+        note = item.data(Qt.ItemDataRole.UserRole)
+        if note is None:
+            return
+        fresh = self.repository.get_note(note.id)
+        self.tabbed_editor.open(fresh if fresh is not None else note)
+
     def _refresh_list_row(self, item: QListWidgetItem | None) -> None:
         """Re-sync one note-list row's label and cached snapshot from the vault.
 
@@ -1246,10 +1268,7 @@ class MainWindow(QMainWindow):
         * the user cancels the prompt dialog.
         """
         tab = self.tabbed_editor.active_tab
-        if tab is None:
-            self.statusBar().showMessage("No note open — open a note first.")
-            return
-        selected = tab.source.textCursor().selectedText()
+        selected = tab.source.textCursor().selectedText() if tab is not None else ""
         # Qt uses U+2029 (PARAGRAPH SEPARATOR) between paragraphs and U+2028
         # (LINE SEPARATOR) for soft line-breaks — convert both to plain newlines.
         selected = selected.replace(" ", "\n").replace(" ", "\n")

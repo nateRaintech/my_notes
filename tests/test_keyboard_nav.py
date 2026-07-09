@@ -15,6 +15,10 @@ true once the window is shown — both are checked here.
 import os
 
 import pytest
+from sqlcipher3 import dbapi2 as sqlcipher
+
+from core import schema
+from core.repository import Repository
 
 # Select the headless platform before any Qt import instantiates a plugin.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -32,6 +36,30 @@ def qapp():
     yield QApplication.instance() or QApplication([])
 
 
+@pytest.fixture
+def repo():
+    """A repository over a migrated, FK-enforcing in-memory connection."""
+    conn = sqlcipher.connect(":memory:")
+    conn.execute("PRAGMA foreign_keys = ON")
+    schema.migrate(conn)
+    try:
+        yield Repository(conn)
+    finally:
+        conn.close()
+
+
+def _window_with_open_note(qapp, repo) -> MainWindow:
+    """A window with one note open in a tab.
+
+    The editor's editable source only exists once a note is open in a tab, so
+    focus-the-editor tests must open one first.
+    """
+    window = MainWindow()
+    window.bind_autosave(repo)
+    window.load_note(repo.create_note(title="N", body="hi"))
+    return window
+
+
 def test_focus_notebook_tree(qapp):
     window = MainWindow()
     window.focus_notebook_tree()
@@ -44,10 +72,10 @@ def test_focus_note_list(qapp):
     assert window.focusWidget() is window.note_list
 
 
-def test_focus_editor_targets_the_editable_source(qapp):
-    window = MainWindow()
+def test_focus_editor_targets_the_editable_source(qapp, repo):
+    window = _window_with_open_note(qapp, repo)
     window.focus_editor()
-    # The editor pane's editable half is what should take focus, not the preview.
+    # The active tab's editable source is what should take focus, not the preview.
     assert window.focusWidget() is window.editor.source
 
 
@@ -75,10 +103,10 @@ def test_focus_methods_are_safe_without_a_repository(qapp):
     window.focus_search()  # no exception
 
 
-def test_focus_actually_receives_keyboard_focus_when_shown(qapp):
+def test_focus_actually_receives_keyboard_focus_when_shown(qapp, repo):
     # hasFocus() is only true once the top-level window is shown/active; this is
     # the stronger end-to-end check that the target really holds keyboard focus.
-    window = MainWindow()
+    window = _window_with_open_note(qapp, repo)
     window.show()
     try:
         window.focus_editor()
@@ -91,12 +119,12 @@ def test_focus_actually_receives_keyboard_focus_when_shown(qapp):
         window.close()
 
 
-def test_each_shortcut_is_wired_to_its_focus_seam(qapp):
+def test_each_shortcut_is_wired_to_its_focus_seam(qapp, repo):
     # Emitting a shortcut's activated signal must move focus to its pane: this
     # guards the QShortcut -> seam connection end to end, not just that a method
     # exists. (We drive the signal rather than synthesise a key event so the
     # test does not depend on the modal event loop / window activation.)
-    window = MainWindow()
+    window = _window_with_open_note(qapp, repo)
     window.focus_tree_shortcut.activated.emit()
     assert window.focusWidget() is window.notebook_tree
     window.focus_list_shortcut.activated.emit()

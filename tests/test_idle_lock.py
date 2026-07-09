@@ -244,7 +244,7 @@ def test_lock_session_clears_decrypted_content(qapp, repo):
 
     assert window.repository is None
     assert window.autosave is None
-    assert window.editor.markdown() == ""
+    assert window.tabbed_editor.count() == 0  # all tabs wiped on lock
     assert window.note_list.count() == 0
     assert window.notebook_tree.topLevelItemCount() == 0
     assert window.search_input.text() == ""
@@ -278,7 +278,7 @@ def test_bind_vault_populates_window_from_vault(qapp, tmp_path):
         repository = app_module._bind_vault(window, vault)
 
         assert window.repository is repository
-        assert window.autosave is not None
+        assert window.tabbed_editor._repository is repository  # tabs will autosave
         assert window.note_list.count() == 1
     finally:
         vault.lock()

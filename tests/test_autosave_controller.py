@@ -177,57 +177,56 @@ def test_main_window_autosave_unbound_by_default(qapp):
 def test_main_window_bind_autosave_then_load_and_persist(qapp, repo):
     note = repo.create_note(title="Untitled", body="")
     window = MainWindow()
-    controller = window.bind_autosave(repo, debounce=DEBOUNCE)
+    window.bind_autosave(repo, debounce=DEBOUNCE)
 
-    assert window.autosave is controller
-    window.load_note(note)
+    window.load_note(note)  # opens a tab bound to the note
     window.editor.source.setPlainText("typed in the main window")
-    assert controller.flush() is True
+    assert window.autosave.flush() is True
     assert repo.get_note(note.id).body == "typed in the main window"
 
 
-def test_main_window_load_note_without_autosave_still_shows_body(qapp, repo):
+def test_main_window_load_note_opens_a_tab_showing_the_body(qapp, repo):
     note = repo.create_note(title="Read only", body="just showing this")
-    window = MainWindow()  # no bind_autosave: editor edits text with nowhere to persist
-    window.load_note(note)
+    window = MainWindow()
+    window.bind_autosave(repo)
+    window.load_note(note)  # opening a note requires a bound repository now
     assert window.editor.markdown() == "just showing this"
 
 
-def test_typing_with_no_note_loaded_creates_and_binds_a_note(qapp, repo):
+def test_new_note_creates_binds_and_selects_a_note(qapp, repo):
     window = MainWindow()
     window.bind_autosave(repo)
     window.refresh_notes()
-    # Fresh launch: nothing is loaded, so the editor is unbound.
-    assert window.autosave.saver.note_id is None
 
-    window.editor.source.setPlainText("a thought I started writing")
+    note = window.new_note()  # creates a note and opens it in a bound tab
 
-    # The first keystroke created a real note and bound it to the editor.
-    assert window.autosave.saver.note_id is not None
+    # The active tab is bound to the new note, and it is the selected list row.
+    assert window.autosave.saver.note_id == note.id
     assert len(repo.list_notes()) == 1
-    # The new note is the selected row in the list.
     from PySide6.QtCore import Qt
 
     current = window.note_list.currentItem()
     assert current is not None
-    assert current.data(Qt.ItemDataRole.UserRole).id == window.autosave.saver.note_id
+    assert current.data(Qt.ItemDataRole.UserRole).id == note.id
 
 
-def test_orphan_text_is_saved_when_navigating_to_another_note(qapp, repo):
-    existing = repo.create_note(title="Old", body="old body")
+def test_navigating_between_notes_keeps_each_tab_intact(qapp, repo):
+    a = repo.create_note(title="A", body="a body")
+    b = repo.create_note(title="B", body="b body")
     window = MainWindow()
     window.bind_autosave(repo)
     window.refresh_notes()
 
-    # Type with nothing loaded, then click an existing note in the navigator.
-    window.editor.source.setPlainText("brand new idea")
-    window._select_note(existing.id)
+    window._select_note(a.id)  # opens tab A
+    window.editor.source.setPlainText("a body edited in place")
+    window._select_note(b.id)  # opens tab B; tab A is untouched (and flushed)
+    assert window.editor.markdown() == "b body"
 
-    # The in-progress text was persisted as its own note, not lost...
+    # Both notes persisted; A's in-progress edit was never overwritten.
     bodies = {n.body for n in repo.list_notes()}
-    assert bodies == {"old body", "brand new idea"}
-    # ...and the editor now shows the note that was clicked.
-    assert window.editor.markdown() == "old body"
+    assert bodies == {"a body edited in place", "b body"}
+    window._select_note(a.id)  # back to tab A
+    assert window.editor.markdown() == "a body edited in place"
 
 
 def test_typing_in_new_note_does_not_create_a_second_note(qapp, repo):
@@ -243,25 +242,45 @@ def test_typing_in_new_note_does_not_create_a_second_note(qapp, repo):
     assert len(repo.list_notes()) == 1
 
 
-def test_reopening_an_autocreated_note_shows_its_saved_text(qapp, repo):
-    """The exact user symptom: an auto-created note re-opens EMPTY.
+def test_clicking_a_note_whose_tab_was_closed_reopens_it(qapp, repo):
+    """Closing a tab (Ctrl+W) leaves its row selected; clicking it must reopen it.
 
-    Typing cold creates a note and autosave writes the text to the vault, but the
-    note list row still holds the empty snapshot captured at creation. Clicking
-    that row must show the text that was saved, not the stale empty body.
+    currentItemChanged does not fire for an already-selected row, so reopening
+    relies on the itemClicked seam.
     """
-    existing = repo.create_note(title="Old", body="old body")
+    note = repo.create_note(title="A", body="a body")
+    window = MainWindow()
+    window.bind_autosave(repo)
+    window.refresh_notes()
+    window._select_note(note.id)  # opens the tab
+
+    window.tabbed_editor.close_tab(window.tabbed_editor.active_tab)  # Ctrl+W
+    assert window.tabbed_editor.active_tab is None
+
+    window._on_note_clicked(window.note_list.currentItem())  # click the same row
+
+    assert window.tabbed_editor.active_tab is not None
+    assert window.editor.markdown() == "a body"
+
+
+def test_reopening_a_closed_note_shows_its_saved_text(qapp, repo):
+    """#92: reopening a note from a stale list row must show its saved text.
+
+    Type into a new note (autosave writes it to the vault), close its tab, then
+    reopen from the list. The row still holds the empty snapshot captured at
+    creation, so selection must read fresh from the vault, not the stale body.
+    """
     window = MainWindow()
     window.bind_autosave(repo)
     window.refresh_notes()
 
+    note = window.new_note()
     window.editor.source.setPlainText("brand new idea")
-    new_id = window.autosave.saver.note_id
+    window.flush_pending()               # persist to the vault
+    window.tabbed_editor.clear_all()     # close the tab (drop the live copy)
+    window.note_list.setCurrentRow(-1)   # deselect so re-selecting fires a change
 
-    # Navigate away (flushes the new note to the vault), then click back onto it.
-    window._select_note(existing.id)
-    window._select_note(new_id)
-
+    window._select_note(note.id)         # reopen from the stale list row
     assert window.editor.markdown() == "brand new idea"
 
 
@@ -296,8 +315,9 @@ def test_autocreated_note_shows_its_title_in_the_list_after_navigating(qapp, rep
     window.bind_autosave(repo)
     window.refresh_notes()
 
+    window.new_note()
     window.editor.source.setPlainText("Buy milk\n\nand eggs")
-    window._select_note(existing.id)  # flush the new note + navigate away
+    window._select_note(existing.id)  # switching flushes the new note + refreshes its row
 
     labels = [window.note_list.item(i).text() for i in range(window.note_list.count())]
     assert "Buy milk" in labels

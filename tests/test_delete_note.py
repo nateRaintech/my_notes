@@ -106,21 +106,21 @@ def test_delete_note_leaves_other_notes_in_the_list(qapp, repo):
     assert repo.get_note(keep.id) is not None
 
 
-def test_deleting_the_open_note_clears_editor_and_detaches_autosave(qapp, repo):
+def test_deleting_the_open_note_closes_its_tab(qapp, repo):
     window = MainWindow()
     window.bind_autosave(repo)
     window.refresh_notes()
 
-    # Create a note via the UI (selects + loads it into the editor) and edit it.
+    # Create a note via the UI (selects + opens it in a tab) and edit it.
     note = window.new_note()
     window.editor.source.setPlainText("# Title\n\nsome text")
     assert window.autosave.saver.note_id == note.id
 
     window.delete_note(note.id)
 
-    # The editor is cleared and auto-save no longer points at the deleted note.
-    assert window.editor.markdown() == ""
-    assert window.autosave.saver.note_id is None
+    # The tab editing the deleted note is closed; nothing is open or bound.
+    assert window.tabbed_editor.tab_for_note(note.id) is None
+    assert window.tabbed_editor.active_tab is None
     assert repo.get_note(note.id) is None
 
 

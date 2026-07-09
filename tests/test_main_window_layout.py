@@ -21,13 +21,12 @@ from PySide6.QtWidgets import (  # noqa: E402
     QDockWidget,
     QLineEdit,
     QListWidget,
-    QPlainTextEdit,
     QTextEdit,
     QTreeWidget,
 )
 
-from ui.editor import MarkdownEditor  # noqa: E402
 from ui.main_window import MainWindow  # noqa: E402
+from ui.tabbed_editor import TabbedEditor  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -37,14 +36,14 @@ def qapp():
 
 
 # ---------------------------------------------------------------------------
-# Central widget is the editor source
+# Central widget is the tabbed editor
 # ---------------------------------------------------------------------------
 
 
-def test_central_widget_is_editor_source(qapp):
+def test_central_widget_is_tabbed_editor(qapp):
     window = MainWindow()
-    assert window.centralWidget() is window.editor.source
-    assert isinstance(window.centralWidget(), QPlainTextEdit)
+    assert window.centralWidget() is window.tabbed_editor
+    assert isinstance(window.centralWidget(), TabbedEditor)
 
 
 # ---------------------------------------------------------------------------
@@ -67,19 +66,21 @@ def test_search_input_attribute(qapp):
     assert isinstance(window.search_input, QLineEdit)
 
 
-def test_editor_attribute(qapp):
+def test_editor_is_none_without_an_open_tab(qapp):
+    # `editor` is a compatibility shim for the active tab; no tab is open on a
+    # fresh window, so it resolves to None.
     window = MainWindow()
-    assert isinstance(window.editor, MarkdownEditor)
+    assert window.editor is None
 
 
-def test_editor_source_attribute(qapp):
+def test_tabbed_editor_attribute(qapp):
     window = MainWindow()
-    assert isinstance(window.editor.source, QPlainTextEdit)
+    assert isinstance(window.tabbed_editor, TabbedEditor)
 
 
-def test_editor_preview_attribute(qapp):
+def test_preview_attribute(qapp):
     window = MainWindow()
-    assert isinstance(window.editor.preview, QTextEdit)
+    assert isinstance(window.preview, QTextEdit)
 
 
 # ---------------------------------------------------------------------------
@@ -119,9 +120,9 @@ def test_dock_notebooks_wraps_notebook_tree(qapp):
     assert window.dock_notebooks.widget() is window.notebook_tree
 
 
-def test_dock_preview_wraps_editor_preview(qapp):
+def test_dock_preview_wraps_preview(qapp):
     window = MainWindow()
-    assert window.dock_preview.widget() is window.editor.preview
+    assert window.dock_preview.widget() is window.preview
 
 
 def test_dock_notelist_contains_search_input(qapp):
@@ -177,18 +178,6 @@ def test_dock_nesting_enabled(qapp):
     assert window.isDockNestingEnabled()
 
 
-# ---------------------------------------------------------------------------
-# Editor splitter exists as an attribute (structural backward-compat check)
-# ---------------------------------------------------------------------------
-
-
-def test_editor_splitter_attribute_exists(qapp):
-    """MarkdownEditor still exposes a .splitter attribute (used by editor tests)."""
-    from PySide6.QtWidgets import QSplitter
-
-    window = MainWindow()
-    assert isinstance(window.editor.splitter, QSplitter)
-    # In the dock layout, MainWindow re-parents source (central widget) and
-    # preview (dock) away from the splitter, so splitter.count() may be 0.
-    # What matters is the attribute exists and the source/preview attributes
-    # point to the right widgets — confirmed by the tests above.
+# The old MarkdownEditor `.splitter` backward-compat check was dropped with the
+# tabbed editor: the window no longer holds a single MarkdownEditor. MarkdownEditor
+# keeps its own unit tests in tests/test_editor.py.

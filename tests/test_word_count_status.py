@@ -11,6 +11,10 @@ Markdown-punctuation handling.
 import os
 
 import pytest
+from sqlcipher3 import dbapi2 as sqlcipher
+
+from core import schema
+from core.repository import Repository
 
 # Select the headless platform before any Qt import instantiates a plugin.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -28,6 +32,29 @@ def qapp():
     yield QApplication.instance() or QApplication([])
 
 
+@pytest.fixture
+def repo():
+    """A repository over a migrated, FK-enforcing in-memory connection."""
+    conn = sqlcipher.connect(":memory:")
+    conn.execute("PRAGMA foreign_keys = ON")
+    schema.migrate(conn)
+    try:
+        yield Repository(conn)
+    finally:
+        conn.close()
+
+
+def _window_with_open_note(qapp, repo) -> MainWindow:
+    """A window bound to ``repo`` with one empty note open in a tab.
+
+    Word count now tracks the active tab, so a tab must exist before typing.
+    """
+    window = MainWindow()
+    window.bind_autosave(repo)
+    window.load_note(repo.create_note(title="", body=""))
+    return window
+
+
 def test_word_count_label_is_a_status_bar_widget(qapp):
     window = MainWindow()
     assert isinstance(window.word_count_label, QLabel)
@@ -40,26 +67,26 @@ def test_fresh_window_shows_zero_words(qapp):
     assert window.word_count_label.text() == "0 words"
 
 
-def test_word_count_updates_live_when_editor_changes(qapp):
-    window = MainWindow()
+def test_word_count_updates_live_when_editor_changes(qapp, repo):
+    window = _window_with_open_note(qapp, repo)
     window.editor.set_markdown("hello world")
     assert window.word_count_label.text() == "2 words"
 
 
-def test_word_count_singular_for_one_word(qapp):
-    window = MainWindow()
+def test_word_count_singular_for_one_word(qapp, repo):
+    window = _window_with_open_note(qapp, repo)
     window.editor.set_markdown("solo")
     assert window.word_count_label.text() == "1 word"
 
 
-def test_word_count_ignores_markdown_punctuation(qapp):
-    window = MainWindow()
+def test_word_count_ignores_markdown_punctuation(qapp, repo):
+    window = _window_with_open_note(qapp, repo)
     window.editor.set_markdown("# Title\n\nbody text")
     assert window.word_count_label.text() == "3 words"
 
 
-def test_word_count_returns_to_zero_when_cleared(qapp):
-    window = MainWindow()
+def test_word_count_returns_to_zero_when_cleared(qapp, repo):
+    window = _window_with_open_note(qapp, repo)
     window.editor.set_markdown("some words here")
     assert window.word_count_label.text() == "3 words"
     window.editor.set_markdown("")
