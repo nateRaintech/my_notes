@@ -264,8 +264,7 @@ def _shutdown(
     """Stop the idle timer, flush auto-save, and lock the vault as the app quits."""
     if idle is not None:
         idle.stop()
-    if window.autosave is not None:
-        window.autosave.stop()
+    window.flush_pending()  # persist every open tab's pending edit
     session.vault.lock()
 
 

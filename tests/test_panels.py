@@ -70,9 +70,9 @@ def test_dock_notebooks_contains_notebook_tree(qapp):
     assert window.dock_notebooks.widget() is window.notebook_tree
 
 
-def test_dock_preview_contains_editor_preview(qapp):
+def test_dock_preview_contains_preview(qapp):
     window = make_window(qapp)
-    assert window.dock_preview.widget() is window.editor.preview
+    assert window.dock_preview.widget() is window.preview
 
 
 def test_dock_notelist_contains_search_input_and_note_list(qapp):
@@ -84,9 +84,9 @@ def test_dock_notelist_contains_search_input_and_note_list(qapp):
     assert window.note_list.parent() is container
 
 
-def test_central_widget_is_editor_source(qapp):
+def test_central_widget_is_tabbed_editor(qapp):
     window = make_window(qapp)
-    assert window.centralWidget() is window.editor.source
+    assert window.centralWidget() is window.tabbed_editor
 
 
 def test_dock_nesting_enabled(qapp):
@@ -226,8 +226,8 @@ def test_focus_mode_hides_all_docks(qapp):
 def test_focus_mode_central_widget_remains_accessible(qapp):
     window = make_window(qapp)
     window.set_focus_mode(True)
-    # The central widget (editor source) is always present.
-    assert window.centralWidget() is window.editor.source
+    # The central widget (the tabbed editor) is always present.
+    assert window.centralWidget() is window.tabbed_editor
 
 
 def test_focus_mode_action_checked_when_on(qapp):
