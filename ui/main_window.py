@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QByteArray, QEvent, QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QAbstractButton,
     QDialog,
     QDockWidget,
     QInputDialog,
@@ -47,17 +48,22 @@ from core.notebooks import build_notebook_tree, would_create_cycle
 from core.settings import DEFAULT_SETTINGS, save_settings
 from core.text import count_words, derive_title
 from core.theme import DEFAULT_THEME, load_stylesheet
+from ui.icons import cross_icon, float_icon, glyph_color
 from ui.import_wizard import ImportWizard
 from ui.quick_switcher import QuickSwitcher
 from ui.settings_dialog import SettingsDialog
 from ui.tabbed_editor import TabbedEditor
 from ui.tag_editor import TagEditorDialog
+from ui.tool_palette import ToolPalette
+from ui.tool_runner import run_tool
+from ui.tools_menu import build_context_menu_extras, build_tools_menu
 
 if TYPE_CHECKING:
     import os
 
     from core.repository import Note, Notebook, Repository
     from core.settings import Settings
+    from core.tools import Tool
 
 WINDOW_TITLE = "my_notes"
 DEFAULT_SIZE = (1000, 700)
@@ -252,6 +258,11 @@ class MainWindow(QMainWindow):
             lambda: self.tabbed_editor.close_tab(self.tabbed_editor.active_tab)
         )
 
+        # Ctrl+Shift+T — fuzzy-search every tool. A sixty-item menu is not
+        # browsable; this is what keeps the suite reachable (#99).
+        self.tool_palette_shortcut = QShortcut(QKeySequence("Ctrl+Shift+T"), self)
+        self.tool_palette_shortcut.activated.connect(self.open_tool_palette)
+
         # --- Menus -----------------------------------------------------------
 
         file_menu = self.menuBar().addMenu("&File")
@@ -264,6 +275,10 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         self.settings_action = file_menu.addAction("Settings…")
         self.settings_action.triggered.connect(self.open_settings)
+
+        # Every tool in core.tools.ALL_TOOLS, one submenu per category. Built
+        # from the registry, so the menu can't drift from the palette (#99).
+        self.tools_menu = build_tools_menu(self.menuBar(), self.run_tool)
 
         view_menu = self.menuBar().addMenu("&View")
         self.dark_theme_action = view_menu.addAction("&Dark Theme")
@@ -306,6 +321,9 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(self.word_count_label)
         self.tabbed_editor.active_tab_changed.connect(self._on_active_tab_changed)
         self.tabbed_editor.tab_text_changed.connect(self._on_active_text_changed)
+        self.tabbed_editor.tab_context_menu_requested.connect(
+            self._show_editor_context_menu
+        )
         self._update_word_count()
 
         self.statusBar().showMessage("Ready")
@@ -472,10 +490,38 @@ class MainWindow(QMainWindow):
     # -------------------------------------------------------------------------
 
     def apply_theme(self, name: str) -> None:
-        """Apply the theme ``name`` to the window."""
+        """Apply the theme ``name`` to the window.
+
+        The stylesheet covers everything Qt draws from CSS. The tab and dock
+        *button glyphs* come from the native style instead, which paints them
+        dark for a light window — invisible on dark chrome (#98) — so they are
+        repainted here in the theme's colour.
+        """
         self.setStyleSheet(load_stylesheet(name))
         self.current_theme = name
         self.dark_theme_action.setChecked(name == "dark")
+        self.tabbed_editor.apply_theme(name)
+        self._apply_dock_button_icons(name)
+
+    def _apply_dock_button_icons(self, name: str) -> None:
+        """Repaint each dock's title-bar close/float buttons for the theme.
+
+        Qt builds these buttons inside the dock's own layout, so they are reached
+        by walking the dock's children rather than by a public accessor. They are
+        matched by the object names Qt gives them; if a Qt version ever renames
+        them the buttons simply keep the native glyph — a cosmetic miss, not a
+        crash, which is why this doesn't assert.
+        """
+        color = glyph_color(name)
+        icons = {
+            "qt_dockwidget_closebutton": cross_icon(color),
+            "qt_dockwidget_floatbutton": float_icon(color),
+        }
+        for dock in (self.dock_notebooks, self.dock_notelist, self.dock_preview):
+            for button in dock.findChildren(QAbstractButton):
+                icon = icons.get(button.objectName())
+                if icon is not None:
+                    button.setIcon(icon)
 
     def _on_toggle_dark_theme(self, checked: bool) -> None:
         name = "dark" if checked else "light"
@@ -634,6 +680,70 @@ class MainWindow(QMainWindow):
         if self.repository is None:
             return None
         return QuickSwitcher(self.repository.list_notes(), parent=self)
+
+    # -------------------------------------------------------------------------
+    # Tools (#99)
+    # -------------------------------------------------------------------------
+
+    def run_tool(self, tool: Tool) -> bool:
+        """Apply ``tool`` to the active tab and report the outcome.
+
+        The single entry point behind all three surfaces — the Tools menu, the
+        editor's right-click menu, and the palette — so they cannot behave
+        differently. Returns whether the tool succeeded; the message always
+        reaches the status bar, because tools whose effect isn't visible (a
+        hash, a validation) still need to say what happened.
+        """
+        tab = self.tabbed_editor.active_tab
+        result = run_tool(tool, tab.source if tab is not None else None)
+        self.statusBar().showMessage(result.message, 0 if result.ok else 8000)
+        if result.changed:
+            # The edit went through the document, so the preview, word count, and
+            # tab title need the same refresh a keystroke would have triggered.
+            self._on_active_text_changed()
+        return result.ok
+
+    def open_tool_palette(self) -> None:
+        """Open the Ctrl+Shift+T palette and run whichever tool is chosen."""
+        dialog = self._make_tool_palette()
+        if dialog is None:
+            return
+        if (
+            dialog.exec() == QDialog.DialogCode.Accepted
+            and dialog.selected_tool is not None
+        ):
+            self.run_tool(dialog.selected_tool)
+
+    def _make_tool_palette(self) -> ToolPalette | None:
+        """Build the palette — the seam tests use to avoid the modal loop."""
+        return ToolPalette(parent=self)
+
+    def build_editor_context_menu(self, source) -> QMenu:
+        """The editor's right-click menu: Qt's standard one plus a Tools submenu.
+
+        Built on ``createStandardContextMenu`` so Undo/Cut/Copy/Paste and their
+        shortcuts stay exactly as they were — the tools are appended, never
+        replacing anything.
+
+        Separate from :meth:`_show_editor_context_menu` because showing a menu
+        runs a modal event loop: tests can build and inspect the menu here
+        without one, the same seam :meth:`_make_quick_switcher` provides.
+        """
+        menu = source.createStandardContextMenu()
+        menu.addSeparator()
+        menu.addMenu(
+            build_context_menu_extras(
+                menu, self.run_tool, palette=self.open_tool_palette
+            )
+        )
+        return menu
+
+    def _show_editor_context_menu(self, pos: QPoint) -> None:
+        """Pop up the editor context menu at ``pos`` (widget-relative)."""
+        tab = self.tabbed_editor.active_tab
+        if tab is None:
+            return
+        self.build_editor_context_menu(tab.source).exec(tab.source.mapToGlobal(pos))
 
     # -------------------------------------------------------------------------
     # Legacy import
