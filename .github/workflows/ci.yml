@@ -34,8 +34,14 @@ jobs:
       # sqlcipher3 (the encrypted vault, tests/test_vault.py — the manylinux
       # wheel installs on ubuntu-latest). A dep enters CI only once a real test
       # imports it. See ROADMAP.md M2 and LESSONS.md.
+      #
+      # pyyaml and sqlparse back the tools suite's YAML and SQL tools (M9, #99).
+      # They are imported lazily at runtime so a missing one degrades to a
+      # message rather than an error — but tests/test_tools_core.py asserts what
+      # those tools actually produce, so CI needs them genuinely installed.
+      # This list is not read from requirements.txt: keep the two in step.
       - name: Install tooling and GUI runtime
-        run: pip install ruff pytest PySide6 argon2-cffi "sqlcipher3>=0.6.2"
+        run: pip install ruff pytest PySide6 argon2-cffi "sqlcipher3>=0.6.2" pyyaml sqlparse
 
       - name: Lint
         run: ruff check .
