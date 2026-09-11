@@ -87,6 +87,24 @@ def test_no_width_means_one_image_pixel_per_device_pixel(qapp, store):
     assert image.deviceIndependentSize().width() == 200
 
 
+class FailingStore:
+    """A store whose connection has gone away, as after ``vault.lock()``."""
+
+    def get(self, image_id):
+        raise sqlcipher.ProgrammingError("Cannot operate on a closed database.")
+
+
+@pytest.mark.parametrize("width", ["1000000", "9" * 25])
+def test_a_huge_typed_width_renders_bounded(qapp, store, width):
+    record = _add(store)
+    doc = _doc(store)
+    image = doc.loadResource(IMAGE, QUrl(f"mnimg:{record.id}?w={width}"))
+    assert image is not doc.placeholder()
+    assert not image.isNull()
+    assert image.width() <= 16384
+    assert image.width() == 400 * 4  # never more than 4x the natural width
+
+
 def test_repeated_renders_hit_the_cache(qapp, store):
     record = _add(store)
     counting = CountingStore(store)
@@ -94,8 +112,48 @@ def test_repeated_renders_hit_the_cache(qapp, store):
     url = QUrl(f"mnimg:{record.id}?w=100")
     doc.loadResource(IMAGE, url)
     doc.loadResource(IMAGE, url)
-    doc.loadResource(IMAGE, QUrl(f"mnimg:{record.id}?w=200"))  # new size, same decode
     assert counting.gets == 1
+
+
+def test_repeated_natural_size_renders_hit_the_cache(qapp, store):
+    record = _add(store)
+    counting = CountingStore(store)
+    doc = _doc(counting)
+    doc.loadResource(IMAGE, QUrl(f"mnimg:{record.id}"))
+    doc.loadResource(IMAGE, QUrl(f"mnimg:{record.id}"))
+    assert counting.gets == 1
+
+
+def test_a_new_width_decodes_again(qapp, store):
+    record = _add(store)
+    counting = CountingStore(store)
+    doc = _doc(counting)
+    doc.loadResource(IMAGE, QUrl(f"mnimg:{record.id}?w=100"))
+    doc.loadResource(IMAGE, QUrl(f"mnimg:{record.id}?w=200"))
+    assert counting.gets == 2
+
+
+def test_the_cache_holds_only_scaled_renderings(qapp, store):
+    record = _add(store)
+    doc = _doc(store)
+    doc.loadResource(IMAGE, QUrl(f"mnimg:{record.id}?w=100"))
+    doc.loadResource(IMAGE, QUrl(f"mnimg:{record.id}"))
+    assert len(doc.cache) == 2
+    assert doc.cache.total_bytes == (100 * 50 + 400 * 200) * 4  # no natural decode
+
+
+def test_natural_image_decodes_on_demand_without_caching(qapp, store):
+    record = _add(store)
+    doc = _doc(store)
+    natural = doc.natural_image(record.id)
+    assert natural.size().toTuple() == (400, 200)
+    assert len(doc.cache) == 0
+
+
+def test_a_failing_store_shows_the_placeholder(qapp):
+    doc = _doc(FailingStore())
+    assert doc.loadResource(IMAGE, QUrl("mnimg:1?w=100")) is doc.placeholder()
+    assert doc.natural_image(1) is None
 
 
 def test_unknown_or_unbound_images_show_the_placeholder(qapp, store):
@@ -120,7 +178,7 @@ def test_set_markdown_renders_through_the_vault(qapp, store):
     doc = _doc(store)
     doc.setMarkdown(f"![s](mnimg:{record.id}?w=100)")
     doc.size()  # force layout
-    assert len(doc.cache) == 2  # the natural image and the 100 px rendering
+    assert len(doc.cache) == 1  # just the 100 px rendering; the natural isn't kept
 
 
 def test_image_cache_evicts_least_recently_used_by_bytes(qapp):

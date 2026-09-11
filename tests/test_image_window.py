@@ -206,8 +206,7 @@ def test_tab_status_messages_reach_the_status_bar(qapp, window, repo):
 def test_lock_session_drops_decoded_images_and_detaches_the_store(qapp, window, repo, store):
     record = _add(store)
     _open(qapp, window, repo, f"![s](mnimg:{record.id}?w=100)")
-    window.preview_document.natural_image(record.id)
-    assert len(window.preview_document.cache) > 0
+    assert len(window.preview_document.cache) > 0  # populated by the preview's render
 
     window.lock_session()
 
