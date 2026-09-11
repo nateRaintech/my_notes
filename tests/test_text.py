@@ -6,7 +6,9 @@ including CI where the Qt runtime is not installed. Per CLAUDE.md's strict
 layering, ``core/`` is the Qt-free, unit-testable layer.
 """
 
-from core.text import count_words, derive_title
+import pytest
+
+from core.text import count_words, derive_title, safe_filename
 
 
 def test_atx_heading_becomes_title():
@@ -100,3 +102,31 @@ def test_count_words_counts_numbers_and_alphanumerics():
 def test_count_words_counts_unicode_letters():
     # str.isalnum() is Unicode-aware, so accented words still count.
     assert count_words("café déjà vu") == 3
+
+
+# -- safe_filename (#105) -----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        ("Weekly notes", "Weekly notes"),
+        ("Q3: plan/draft?", "Q3_ plan_draft_"),
+        ('a<b>c"d\\e|f*g', "a_b_c_d_e_f_g"),
+        ("tab\there", "tab_here"),
+        ("Report. . ", "Report"),
+        ("  spaced   out  ", "spaced out"),
+    ],
+)
+def test_safe_filename_replaces_what_windows_rejects(title, expected):
+    assert safe_filename(title) == expected
+
+
+@pytest.mark.parametrize("title", ["", "   ", "...", ". ."])
+def test_safe_filename_falls_back(title):
+    assert safe_filename(title) == "note"
+
+
+def test_safe_filename_caps_the_length():
+    assert len(safe_filename("x" * 300)) == 100
+    assert safe_filename("ab" * 80, max_length=10) == "ababababab"
