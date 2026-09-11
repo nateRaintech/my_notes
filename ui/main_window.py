@@ -50,11 +50,13 @@ from core.image_refs import resolve_ref
 from core.images import extension_for
 from core.notebooks import build_notebook_tree, would_create_cycle
 from core.settings import DEFAULT_SETTINGS, save_settings
-from core.text import count_words, derive_title
+from core.text import count_words, derive_title, safe_filename
 from core.theme import DEFAULT_THEME, load_stylesheet
 from ui.icons import cross_icon, float_icon, glyph_color
 from ui.image_ingest import IngestError, ingest_file
 from ui.import_wizard import ImportWizard
+from ui.note_export import write_html, write_pdf
+from ui.note_render import plain_text, render_document
 from ui.preview_images import PreviewImage, apply_image_width, image_at
 from ui.quick_switcher import QuickSwitcher
 from ui.settings_dialog import SettingsDialog
@@ -76,8 +78,9 @@ if TYPE_CHECKING:
 WINDOW_TITLE = "my_notes"
 DEFAULT_SIZE = (1000, 700)
 
-# How long an image-related status message stays up (ms); errors match run_tool's.
-_IMAGE_STATUS_MS = 8000
+# How long a status-bar message from an image or Note-menu action stays up (ms);
+# errors match run_tool's.
+_STATUS_MS = 8000
 
 # Label for the "no notebook / top level" option in the move pickers.
 _ROOT_CHOICE = "(Root)"
@@ -339,6 +342,22 @@ class MainWindow(QMainWindow):
             lambda checked: self.set_focus_mode(checked)
         )
 
+        # Note menu: actions on the whole active note (#105). All of them need a
+        # note, so they share one enabled state (see _update_note_actions).
+        note_menu = self.menuBar().addMenu("&Note")
+        self.copy_text_action = note_menu.addAction("Copy &Text")
+        self.copy_text_action.triggered.connect(self.copy_note_text)
+        note_menu.addSeparator()
+        self.export_html_action = note_menu.addAction("Export to &HTML…")
+        self.export_html_action.triggered.connect(self.export_note_html)
+        self.export_pdf_action = note_menu.addAction("Export to &PDF…")
+        self.export_pdf_action.triggered.connect(self.export_note_pdf)
+        self._note_actions = [
+            self.copy_text_action,
+            self.export_html_action,
+            self.export_pdf_action,
+        ]
+
         # --- Status bar ------------------------------------------------------
 
         self.word_count_label = QLabel()
@@ -349,13 +368,14 @@ class MainWindow(QMainWindow):
             self._show_editor_context_menu
         )
         self.tabbed_editor.tab_status_message.connect(
-            lambda message: self.statusBar().showMessage(message, _IMAGE_STATUS_MS)
+            lambda message: self.statusBar().showMessage(message, _STATUS_MS)
         )
         self._update_word_count()
 
         self.statusBar().showMessage("Ready")
 
         self.apply_theme(DEFAULT_THEME)
+        self._update_note_actions()
 
     # -------------------------------------------------------------------------
     # Active-tab compatibility shims + preview/word-count wiring
@@ -380,6 +400,7 @@ class MainWindow(QMainWindow):
     def _on_active_tab_changed(self) -> None:
         self._render_preview()
         self._update_word_count()
+        self._update_note_actions()
 
     def _on_active_text_changed(self) -> None:
         self._render_preview()
@@ -419,7 +440,7 @@ class MainWindow(QMainWindow):
     def insert_image_from_file(self) -> None:
         """**Insert → Image…**: pick image files and insert them on their own line."""
         if self.tabbed_editor.active_tab is None:
-            self.statusBar().showMessage("Open a note first", _IMAGE_STATUS_MS)
+            self.statusBar().showMessage("Open a note first", _STATUS_MS)
             return
         paths = self._choose_image_files()
         if paths:
@@ -429,7 +450,7 @@ class MainWindow(QMainWindow):
         """Store each file in ``paths`` and insert its Markdown on its own line."""
         tab = self.tabbed_editor.active_tab
         if tab is None or self.image_store is None:
-            self.statusBar().showMessage("Open a note first", _IMAGE_STATUS_MS)
+            self.statusBar().showMessage("Open a note first", _STATUS_MS)
             return False
         ratio = tab.source.devicePixelRatioF()
         try:
@@ -438,7 +459,7 @@ class MainWindow(QMainWindow):
                 for path in paths
             ]
         except IngestError as error:
-            self.statusBar().showMessage(str(error), _IMAGE_STATUS_MS)
+            self.statusBar().showMessage(str(error), _STATUS_MS)
             return False
         tab.source.insert_on_own_line("\n\n".join(snippets))
         return True
@@ -488,7 +509,7 @@ class MainWindow(QMainWindow):
         if natural is None or clipboard is None:
             return False
         clipboard.setImage(natural)
-        self.statusBar().showMessage("Image copied", _IMAGE_STATUS_MS)
+        self.statusBar().showMessage("Image copied", _STATUS_MS)
         return True
 
     def save_preview_image(self, image: PreviewImage) -> bool:
@@ -502,9 +523,9 @@ class MainWindow(QMainWindow):
         try:
             Path(path).write_bytes(record.data)
         except OSError as error:
-            self.statusBar().showMessage(f"Couldn't save the image: {error.strerror}", _IMAGE_STATUS_MS)
+            self.statusBar().showMessage(f"Couldn't save the image: {error.strerror}", _STATUS_MS)
             return False
-        self.statusBar().showMessage(f"Saved {Path(path).name}", _IMAGE_STATUS_MS)
+        self.statusBar().showMessage(f"Saved {Path(path).name}", _STATUS_MS)
         return True
 
     def _choose_save_path(self, default_name: str) -> str:
@@ -521,11 +542,67 @@ class MainWindow(QMainWindow):
         if ref is None:
             self.statusBar().showMessage(
                 "Couldn't tell which image that is — edit its width in the note text",
-                _IMAGE_STATUS_MS,
+                _STATUS_MS,
             )
             return False
         apply_image_width(tab.source, ref, None)
         return True
+
+    # -------------------------------------------------------------------------
+    # Note menu (#105)
+    # -------------------------------------------------------------------------
+
+    def _update_note_actions(self) -> None:
+        """Enable the Note menu exactly while a note tab is active.
+
+        Runs on every active-tab change — including the one the lock path
+        causes when it closes every tab — so the menu is disabled at launch,
+        with no tab open, and after a lock, with no extra wiring.
+        """
+        enabled = self.tabbed_editor.active_tab is not None
+        for action in self._note_actions:
+            action.setEnabled(enabled)
+
+    def copy_note_text(self) -> bool:
+        """Put the active note's readable text on the clipboard (no images or tables)."""
+        tab = self.tabbed_editor.active_tab
+        clipboard = QGuiApplication.clipboard()
+        if tab is None or clipboard is None:
+            return False
+        text = plain_text(render_document(tab.markdown(), self.image_store))
+        clipboard.setText(text)
+        self.statusBar().showMessage(f"Copied {len(text)} characters", _STATUS_MS)
+        return True
+
+    def export_note_html(self) -> bool:
+        """**Note → Export to HTML…**: a self-contained HTML file."""
+        return self._export_note(".html", "HTML files (*.html)", write_html)
+
+    def export_note_pdf(self) -> bool:
+        """**Note → Export to PDF…**: a Letter-size PDF."""
+        return self._export_note(".pdf", "PDF files (*.pdf)", write_pdf)
+
+    def _export_note(self, extension: str, file_filter: str, writer) -> bool:
+        tab = self.tabbed_editor.active_tab
+        if tab is None:
+            return False
+        markdown = tab.markdown()
+        title = derive_title(markdown)
+        path = self._choose_export_path(safe_filename(title) + extension, file_filter)
+        if not path:
+            return False
+        try:
+            writer(markdown, self.image_store, path, title=title)
+        except OSError as error:
+            self.statusBar().showMessage(f"Couldn't export: {error}", _STATUS_MS)
+            return False
+        self.statusBar().showMessage(f"Exported {Path(path).name}", _STATUS_MS)
+        return True
+
+    def _choose_export_path(self, default_name: str, file_filter: str) -> str:
+        """The export save dialog — the seam tests replace to avoid a modal dialog."""
+        path, _ = QFileDialog.getSaveFileName(self, "Export note", default_name, file_filter)
+        return path
 
     # -------------------------------------------------------------------------
     # Focus mode
