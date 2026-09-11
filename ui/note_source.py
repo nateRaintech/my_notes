@@ -6,8 +6,12 @@ image — or local image files — and a vault is bound (``image_store``), it is
 stored in the vault and replaced by Markdown that shows it. Anything else, and
 everything while no vault is bound, goes to Qt's default handling unchanged.
 
-Failures (an unreadable or oversized file) never raise out of a paste: they are
-reported through :attr:`status_message` and the note is left untouched.
+Dropped files go on their own line (:meth:`insert_on_own_line`); a clipboard
+image goes at the caret, like any paste.
+
+Failures never raise out of a paste — ``insertFromMimeData`` is a Qt virtual.
+An unreadable or oversized file, or a store whose database fails underneath it,
+is reported through :attr:`status_message` and the note is left untouched.
 """
 
 from __future__ import annotations
@@ -50,18 +54,38 @@ class NoteSourceEdit(QPlainTextEdit):
         if self.image_store is None or not wants_image_paste(source):
             super().insertFromMimeData(source)
             return
+        paths = local_image_paths(source)
         try:
-            markdown = self._ingest(source)
+            markdown = self._ingest(source, paths)
         except IngestError as error:
             self.status_message.emit(str(error))
             return
-        # insertPlainText is a single undoable edit at the caret.
-        self.insertPlainText(markdown)
+        except Exception as error:  # e.g. sqlite: never escape a Qt virtual
+            self.status_message.emit(f"Couldn't add the image: {error}")
+            return
+        if paths:
+            self.insert_on_own_line(markdown)
+        else:
+            # insertPlainText is a single undoable edit at the caret.
+            self.insertPlainText(markdown)
 
-    def _ingest(self, source: QMimeData) -> str:
+    def insert_on_own_line(self, text: str) -> None:
+        """Insert ``text`` at the caret, starting a new line if mid-line.
+
+        One undoable edit. A selection is replaced, as by any insert.
+        """
+        cursor = self.textCursor()
+        cursor.beginEditBlock()
+        cursor.removeSelectedText()
+        if not cursor.atBlockStart():
+            cursor.insertText("\n")
+        cursor.insertText(text)
+        cursor.endEditBlock()
+        self.setTextCursor(cursor)
+
+    def _ingest(self, source: QMimeData, paths: list[str]) -> str:
         assert self.image_store is not None
         ratio = self.devicePixelRatioF()
-        paths = local_image_paths(source)
         if paths:
             return "\n\n".join(
                 ingest_file(self.image_store, path, device_pixel_ratio=ratio)

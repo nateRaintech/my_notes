@@ -131,6 +131,36 @@ def test_local_image_paths_needs_every_url_to_be_a_local_image(qapp, tmp_path):
     assert local_image_paths(mime) == []
 
 
+def test_local_image_paths_reads_the_format_list_once(qapp, tmp_path, monkeypatch):
+    calls = []
+
+    class CountingReader:
+        @staticmethod
+        def supportedImageFormats():
+            calls.append(1)
+            return [b"png"]
+
+    ingest_module._readable_suffixes.cache_clear()
+    monkeypatch.setattr(ingest_module, "QImageReader", CountingReader)
+    mime = QMimeData()
+    mime.setUrls([QUrl.fromLocalFile(str(tmp_path / "a.png"))])
+    try:
+        for _ in range(3):  # e.g. successive drag-move events
+            assert local_image_paths(mime) != []
+    finally:
+        ingest_module._readable_suffixes.cache_clear()
+    assert len(calls) == 1
+
+
+def test_local_image_files_win_over_text(qapp, tmp_path):
+    # Rule 1 beats rule 2: a file manager drop carries both URLs and text.
+    mime = QMimeData()
+    mime.setUrls([QUrl.fromLocalFile(str(tmp_path / "shot.png"))])
+    mime.setText(str(tmp_path / "shot.png"))
+    assert mime.hasText()
+    assert wants_image_paste(mime) is True
+
+
 def test_wants_image_paste_lets_text_win(qapp):
     image_only = QMimeData()
     image_only.setImageData(_image(4, 4))

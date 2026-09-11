@@ -417,7 +417,7 @@ class MainWindow(QMainWindow):
         self._render_preview()
 
     def insert_image_from_file(self) -> None:
-        """**Insert → Image…**: pick image files and insert them at the caret."""
+        """**Insert → Image…**: pick image files and insert them on their own line."""
         if self.tabbed_editor.active_tab is None:
             self.statusBar().showMessage("Open a note first", _IMAGE_STATUS_MS)
             return
@@ -426,7 +426,7 @@ class MainWindow(QMainWindow):
             self.insert_image_files(paths)
 
     def insert_image_files(self, paths: list[str]) -> bool:
-        """Store each file in ``paths`` and insert its Markdown at the caret."""
+        """Store each file in ``paths`` and insert its Markdown on its own line."""
         tab = self.tabbed_editor.active_tab
         if tab is None or self.image_store is None:
             self.statusBar().showMessage("Open a note first", _IMAGE_STATUS_MS)
@@ -440,7 +440,7 @@ class MainWindow(QMainWindow):
         except IngestError as error:
             self.statusBar().showMessage(str(error), _IMAGE_STATUS_MS)
             return False
-        tab.source.insertPlainText("\n\n".join(snippets))
+        tab.source.insert_on_own_line("\n\n".join(snippets))
         return True
 
     def _choose_image_files(self) -> list[str]:
@@ -729,14 +729,18 @@ class MainWindow(QMainWindow):
 
     def lock_session(self) -> None:
         """Clear all decrypted content and detach the data layer after an auto-lock."""
+        # Decoded images are decrypted content too: drop them and the store.
+        # This comes first because both lock paths have already closed the
+        # vault's connection, and clear_all re-renders each next tab as it
+        # removes the one before — with the store attached, every render would
+        # query a closed database.
+        self.image_store = None
+        self.tabbed_editor.set_image_store(None)
+        self.preview_document.set_store(None)
         # Flush every tab's pending edit, then wipe all tabs (encrypted-vault
         # requirement: no decrypted note text lingers after lock). clear_all
         # flushes each tab before removing it.
         self.tabbed_editor.clear_all()
-        # Decoded images are decrypted content too: drop them and the store.
-        self.image_store = None
-        self.tabbed_editor.set_image_store(None)
-        self.preview_document.set_store(None)
         self.repository = None
         self.current_notebook_id = None
         self.current_tag_id = None

@@ -120,6 +120,65 @@ def test_dropping_image_files_inserts_each_one(qapp, store, tmp_path):
     assert "![second](mnimg:2?w=" in text
 
 
+def test_a_dropped_image_lands_on_its_own_line(qapp, store, tmp_path):
+    path = tmp_path / "shot.png"
+    assert _image(10, 10).save(str(path), "PNG")
+    mime = QMimeData()
+    mime.setUrls([QUrl.fromLocalFile(str(path))])
+    edit = _edit(store)
+    edit.setPlainText("before")
+    edit.moveCursor(QTextCursor.MoveOperation.End)
+
+    edit.insertFromMimeData(mime)
+
+    assert edit.toPlainText().startswith("before\n![shot](mnimg:1?w=")
+
+
+def test_insert_on_own_line_breaks_the_line_mid_text(qapp):
+    edit = NoteSourceEdit()
+    edit.setPlainText("before")
+    edit.moveCursor(QTextCursor.MoveOperation.End)
+    edit.insert_on_own_line("IMG")
+    assert edit.toPlainText() == "before\nIMG"
+    assert edit.textCursor().position() == len("before\nIMG")
+
+
+def test_insert_on_own_line_adds_nothing_at_a_line_start(qapp):
+    edit = NoteSourceEdit()
+    edit.setPlainText("first\n")
+    edit.moveCursor(QTextCursor.MoveOperation.End)
+    edit.insert_on_own_line("IMG")
+    assert edit.toPlainText() == "first\nIMG"
+
+
+def test_insert_on_own_line_is_one_undo_step(qapp):
+    edit = NoteSourceEdit()
+    edit.setPlainText("before")
+    edit.moveCursor(QTextCursor.MoveOperation.End)
+    edit.insert_on_own_line("IMG")
+    edit.undo()
+    assert edit.toPlainText() == "before"
+
+
+class BrokenStore:
+    """A store whose database fails underneath it (closed, disk full, ...)."""
+
+    def add(self, *args):
+        raise sqlcipher.OperationalError("database or disk is full")
+
+
+def test_a_store_failure_is_reported_not_raised(qapp):
+    messages = []
+    edit = _edit(BrokenStore())
+    edit.setPlainText("unchanged")
+    edit.status_message.connect(messages.append)
+
+    edit.insertFromMimeData(_image_mime())
+
+    assert edit.toPlainText() == "unchanged"
+    assert messages == ["Couldn't add the image: database or disk is full"]
+
+
 def test_a_failed_ingest_reports_and_changes_nothing(qapp, store, tmp_path):
     bad = tmp_path / "broken.png"
     bad.write_bytes(b"nope")

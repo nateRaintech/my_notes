@@ -18,6 +18,7 @@ import this module.
 
 from __future__ import annotations
 
+import functools
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -121,7 +122,7 @@ def local_image_paths(mime: QMimeData) -> list[str]:
     """
     if not mime.hasUrls():
         return []
-    readable = {bytes(f).decode().lower() for f in QImageReader.supportedImageFormats()}
+    readable = _readable_suffixes()
     paths = []
     for url in mime.urls():
         if not url.isLocalFile():
@@ -131,6 +132,12 @@ def local_image_paths(mime: QMimeData) -> list[str]:
             return []
         paths.append(path)
     return paths
+
+
+@functools.cache
+def _readable_suffixes() -> frozenset[str]:
+    """File suffixes Qt can decode — built once, not on every drag-move event."""
+    return frozenset(bytes(f).decode().lower() for f in QImageReader.supportedImageFormats())
 
 
 def wants_image_paste(mime: QMimeData) -> bool:

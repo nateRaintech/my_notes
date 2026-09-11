@@ -165,13 +165,13 @@ def test_reset_declines_when_the_image_is_ambiguous(qapp, window, repo, store):
     assert window.statusBar().currentMessage()
 
 
-def test_insert_image_files_inserts_at_the_caret(qapp, window, repo, tmp_path):
+def test_insert_image_files_puts_the_image_on_its_own_line(qapp, window, repo, tmp_path):
     path = tmp_path / "diagram.png"
     assert _image(40, 20).save(str(path), "PNG")
-    tab = _open(qapp, window, repo, "before ")
+    tab = _open(qapp, window, repo, "before")
     tab.source.moveCursor(QTextCursor.MoveOperation.End)
     assert window.insert_image_files([str(path)]) is True
-    assert tab.markdown().startswith("before ![diagram](mnimg:")
+    assert tab.markdown().startswith("before\n![diagram](mnimg:")
 
 
 def test_insert_image_files_reports_failures(qapp, window, repo, tmp_path):
