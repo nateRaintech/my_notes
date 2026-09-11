@@ -17,12 +17,14 @@ import time
 from typing import TYPE_CHECKING, Callable
 
 from PySide6.QtCore import QPoint, Qt, Signal
-from PySide6.QtWidgets import QPlainTextEdit, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from core.autosave import DEFAULT_DEBOUNCE_SECONDS
 from ui.autosave import AutoSaveController
+from ui.note_source import NoteSourceEdit
 
 if TYPE_CHECKING:
+    from core.images import ImageStore
     from core.repository import Note, Repository
 
 _SOURCE_MIN_WIDTH = 240
@@ -45,6 +47,9 @@ class NoteTab(QWidget):
     #: Re-emitted so the window can append its Tools submenu to Qt's standard
     #: editor context menu (#99) without the tab knowing what a tool is.
     context_menu_requested = Signal(QPoint)
+    #: Re-emitted from the source pane: a status-bar message (e.g. an image
+    #: that couldn't be added, #101).
+    status_message = Signal(str)
 
     def __init__(
         self,
@@ -55,7 +60,7 @@ class NoteTab(QWidget):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self.source = QPlainTextEdit()
+        self.source = NoteSourceEdit()
         self.source.setPlaceholderText("Write Markdown here…")
         self.source.setMinimumWidth(_SOURCE_MIN_WIDTH)
 
@@ -68,6 +73,7 @@ class NoteTab(QWidget):
         )
         self._controller.orphan_edit_detected.connect(self.orphan_edit_detected)
         self.source.textChanged.connect(self.text_changed)
+        self.source.status_message.connect(self.status_message)
 
         self.source.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.source.customContextMenuRequested.connect(self.context_menu_requested)
@@ -97,3 +103,7 @@ class NoteTab(QWidget):
     @property
     def note_id(self) -> int | None:
         return self._controller.saver.note_id
+
+    def set_image_store(self, store: ImageStore | None) -> None:
+        """Bind (or with ``None``, detach) the vault images paste/drop go into."""
+        self.source.image_store = store

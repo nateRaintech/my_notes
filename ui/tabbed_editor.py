@@ -33,6 +33,7 @@ from ui.icons import cross_icon, glyph_color
 from ui.note_tab import NoteTab
 
 if TYPE_CHECKING:
+    from core.images import ImageStore
     from core.repository import Note, Repository
 
 _PLACEHOLDER_TEXT = "No note open — pick one in the list or press Ctrl+N"
@@ -53,6 +54,8 @@ class TabbedEditor(QWidget):
     tab_orphan_edit = Signal(object, str)
     #: A tab's editing surface was right-clicked, at the given position (#99).
     tab_context_menu_requested = Signal(QPoint)
+    #: A tab's status-bar message, re-emitted for the window (#101).
+    tab_status_message = Signal(str)
 
     def __init__(
         self,
@@ -66,6 +69,8 @@ class TabbedEditor(QWidget):
         self._repository = repository
         self._debounce = debounce
         self._clock = clock
+        # The vault's image store, handed to every tab (None while locked).
+        self._image_store: ImageStore | None = None
 
         # The tab we were last on, so we can flush it when the user switches away.
         self._active_tab: NoteTab | None = None
@@ -92,6 +97,14 @@ class TabbedEditor(QWidget):
 
     def set_repository(self, repository: Repository) -> None:
         self._repository = repository
+
+    def set_image_store(self, store: ImageStore | None) -> None:
+        """Give every open tab — and every later one — the vault's image store."""
+        self._image_store = store
+        for index in range(self._tabs.count()):
+            tab = self._tabs.widget(index)
+            if isinstance(tab, NoteTab):
+                tab.set_image_store(store)
 
     # -- theming ------------------------------------------------------------
     def apply_theme(self, theme: str) -> None:
@@ -214,6 +227,8 @@ class TabbedEditor(QWidget):
             lambda text, t=tab: self.tab_orphan_edit.emit(t, text)
         )
         tab.context_menu_requested.connect(self.tab_context_menu_requested)
+        tab.set_image_store(self._image_store)
+        tab.status_message.connect(self.tab_status_message)
         return tab
 
     def _on_current_changed(self, _index: int) -> None:
