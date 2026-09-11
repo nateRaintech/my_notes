@@ -127,6 +127,23 @@ def test_safe_filename_falls_back(title):
     assert safe_filename(title) == "note"
 
 
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        ("NUL", "NUL_"),
+        ("com1", "com1_"),
+        ("LPT9", "LPT9_"),
+        ("Aux.txt", "Aux.txt_"),
+        # Only the exact device names are reserved — these are ordinary titles.
+        ("CONS", "CONS"),
+        ("COM10", "COM10"),
+        ("Weekly notes", "Weekly notes"),
+    ],
+)
+def test_safe_filename_defuses_windows_device_names(title, expected):
+    assert safe_filename(title) == expected
+
+
 def test_safe_filename_caps_the_length():
     assert len(safe_filename("x" * 300)) == 100
     assert safe_filename("ab" * 80, max_length=10) == "ababababab"

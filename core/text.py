@@ -19,6 +19,14 @@ _ATX_MARKER = re.compile(r"^(#{1,6})(?:\s|$)")
 # Characters Windows forbids in file names, plus ASCII control characters.
 _UNSAFE_FILENAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
+# Device names Windows reserves: no file may be named CON, PRN, AUX, NUL,
+# COM1-COM9 or LPT1-LPT9, in any case, with or without an extension.
+_RESERVED_STEMS = frozenset(
+    {"CON", "PRN", "AUX", "NUL"}
+    | {f"COM{digit}" for digit in range(1, 10)}
+    | {f"LPT{digit}" for digit in range(1, 10)}
+)
+
 
 def derive_title(markdown: str, *, max_length: int = 120, fallback: str = "Untitled") -> str:
     """Derive a human-readable title from a note's Markdown body.
@@ -72,9 +80,13 @@ def safe_filename(title: str, *, max_length: int = 100, fallback: str = "note") 
     Replaces the characters Windows rejects in file names — and control
     characters — with ``_``, collapses whitespace, caps the length, and trims
     trailing dots and spaces (Windows silently drops them, which would change
-    the name the user saw in the dialog). Returns ``fallback`` if nothing usable
-    is left. Used for the export dialogs' suggested file names (#105).
+    the name the user saw in the dialog). A stem Windows reserves for a device
+    (``NUL``, ``COM1``, …) gets a trailing ``_``, since a file cannot carry that
+    name even with an extension. Returns ``fallback`` if nothing usable is left.
+    Used for the export dialogs' suggested file names (#105).
     """
     stem = " ".join(_UNSAFE_FILENAME.sub("_", title).split())
     stem = stem[:max_length].rstrip(" .")
+    if stem.split(".", 1)[0].upper() in _RESERVED_STEMS:
+        stem += "_"
     return stem or fallback
