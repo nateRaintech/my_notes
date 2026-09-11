@@ -1,8 +1,9 @@
 """Database schema and forward-only migrations for the encrypted vault.
 
-The vault stores everything in five tables — ``notebooks``, ``notes``, ``tags``,
+The vault's core is five tables — ``notebooks``, ``notes``, ``tags``,
 ``note_tags`` and an ``notes_fts`` full-text index — created automatically the
-first time a vault is opened. The logical schema version is tracked in SQLite's
+first time a vault is opened; later migrations add ``app_secrets`` (2) and
+``images`` (3). The logical schema version is tracked in SQLite's
 ``PRAGMA user_version``; :func:`migrate` brings a connection up to
 :data:`SCHEMA_VERSION` by applying each pending migration in order. It is
 **forward-only** and **idempotent**: a database already at the latest version is
@@ -40,7 +41,7 @@ if TYPE_CHECKING:
 
 # Bump this when appending a migration below. Always equals the highest
 # migration version, i.e. the schema a freshly created vault ends up at.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Migration 1 — the initial schema.
 #   notebooks  nest via a self-referential parent_id (deleting a notebook removes
@@ -119,6 +120,26 @@ CREATE TABLE IF NOT EXISTS app_secrets (
 );
 """
 
+# Migration 3 — images pasted, dropped or inserted into notes (#101).
+#   images  vault-global blobs, content-addressed by sha256 so the same image
+#           pasted into several notes is stored once. There is deliberately no
+#           note_id: a note refers to an image only through `mnimg:<id>` URLs in
+#           its body (core.image_refs), and images no body mentions are removed
+#           by core.images.ImageStore.sweep_orphans. width/height cache the
+#           natural pixel size so it never has to be decoded just to be known.
+_MIGRATION_3 = """
+CREATE TABLE IF NOT EXISTS images (
+    id         INTEGER PRIMARY KEY,
+    sha256     TEXT    NOT NULL UNIQUE,
+    mime       TEXT    NOT NULL,
+    width      INTEGER NOT NULL,
+    height     INTEGER NOT NULL,
+    byte_size  INTEGER NOT NULL,
+    data       BLOB    NOT NULL,
+    created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+"""
+
 # Forward-only, ordered (version, DDL) migrations. Append new ones and bump
 # SCHEMA_VERSION; never edit or reorder a shipped migration — vaults in the field
 # have already applied it, and migrations only ever run *forward* from the
@@ -126,6 +147,7 @@ CREATE TABLE IF NOT EXISTS app_secrets (
 _MIGRATIONS: tuple[tuple[int, str], ...] = (
     (1, _MIGRATION_1),
     (2, _MIGRATION_2),
+    (3, _MIGRATION_3),
 )
 
 

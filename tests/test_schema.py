@@ -145,3 +145,39 @@ def test_vault_schema_survives_unlock(tmp_path):
         assert _fts_matches(vault.connection, "hello") == 1
     finally:
         vault.lock()
+
+
+# -- migration 3: images (#101) ---------------------------------------------
+
+
+def test_migrate_creates_images_table(conn):
+    schema.migrate(conn)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(images)")}
+    assert columns == {
+        "id", "sha256", "mime", "width", "height", "byte_size", "data", "created_at",
+    }
+
+
+def test_images_sha256_is_unique(conn):
+    schema.migrate(conn)
+    insert = (
+        "INSERT INTO images (sha256, mime, width, height, byte_size, data) "
+        "VALUES (?, 'image/png', 1, 1, 1, x'00')"
+    )
+    conn.execute(insert, ("abc",))
+    with pytest.raises(sqlcipher.IntegrityError):
+        conn.execute(insert, ("abc",))
+
+
+def test_migration_3_upgrades_a_v2_vault_and_keeps_its_notes(conn):
+    # Build a vault exactly as schema v2 left it, with a note in it.
+    conn.executescript(schema._MIGRATION_1)
+    conn.executescript(schema._MIGRATION_2)
+    conn.execute("PRAGMA user_version = 2")
+    conn.execute("INSERT INTO notes (title, body) VALUES ('kept', 'body')")
+    conn.commit()
+
+    assert schema.migrate(conn) == 3
+    assert "images" in _table_names(conn)
+    assert conn.execute("SELECT title FROM notes").fetchall() == [("kept",)]
+    assert schema.migrate(conn) == 3  # idempotent
