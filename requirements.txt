@@ -16,6 +16,8 @@ pyyaml             # JSON<->YAML conversion in the tools suite (M9). Imported
                    # see that import, hence the hiddenimports in my_notes.spec.
 sqlparse           # SQL formatting in the tools suite (M9). Same lazy-import
                    # and hiddenimports note as pyyaml.
+pypdf              # PDF reading (BSD): the M11 PDF-import insert, and the PDF export
+                   # tests read exported files back with it.
 
 # --- Dev / build / CI ---
 pytest             # test runner
