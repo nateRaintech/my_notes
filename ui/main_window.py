@@ -20,14 +20,16 @@ from __future__ import annotations
 
 import base64
 from dataclasses import replace
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QByteArray, QEvent, QPoint, Qt, QTimer, Signal
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QGuiApplication, QImageReader, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractButton,
     QDialog,
     QDockWidget,
+    QFileDialog,
     QInputDialog,
     QLabel,
     QLineEdit,
@@ -44,12 +46,16 @@ from PySide6.QtWidgets import (
 )
 
 from core.autosave import DEFAULT_DEBOUNCE_SECONDS
+from core.image_refs import resolve_ref
+from core.images import extension_for
 from core.notebooks import build_notebook_tree, would_create_cycle
 from core.settings import DEFAULT_SETTINGS, save_settings
 from core.text import count_words, derive_title
 from core.theme import DEFAULT_THEME, load_stylesheet
 from ui.icons import cross_icon, float_icon, glyph_color
+from ui.image_ingest import IngestError, ingest_file
 from ui.import_wizard import ImportWizard
+from ui.preview_images import PreviewImage, apply_image_width, image_at
 from ui.quick_switcher import QuickSwitcher
 from ui.settings_dialog import SettingsDialog
 from ui.tabbed_editor import TabbedEditor
@@ -57,16 +63,21 @@ from ui.tag_editor import TagEditorDialog
 from ui.tool_palette import ToolPalette
 from ui.tool_runner import run_tool
 from ui.tools_menu import build_context_menu_extras, build_tools_menu
+from ui.vault_document import VaultTextDocument
 
 if TYPE_CHECKING:
     import os
 
+    from core.images import ImageStore
     from core.repository import Note, Notebook, Repository
     from core.settings import Settings
     from core.tools import Tool
 
 WINDOW_TITLE = "my_notes"
 DEFAULT_SIZE = (1000, 700)
+
+# How long an image-related status message stays up (ms); errors match run_tool's.
+_IMAGE_STATUS_MS = 8000
 
 # Label for the "no notebook / top level" option in the move pickers.
 _ROOT_CHOICE = "(Root)"
@@ -193,6 +204,15 @@ class MainWindow(QMainWindow):
         self.preview = QTextEdit()
         self.preview.setReadOnly(True)
         self.preview.setMinimumWidth(_EDITOR_MIN_WIDTH)
+        # Resolves `mnimg:` images from the vault, sharp at the display's scale
+        # (#101). No store until a vault is bound: images show a placeholder.
+        self.image_store: ImageStore | None = None
+        self.preview_document = VaultTextDocument(
+            self.preview, device_pixel_ratio=self.preview.devicePixelRatioF
+        )
+        self.preview.setDocument(self.preview_document)
+        self.preview.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.preview.customContextMenuRequested.connect(self._show_preview_context_menu)
 
         # --- Dock widgets ----------------------------------------------------
 
@@ -276,6 +296,10 @@ class MainWindow(QMainWindow):
         self.settings_action = file_menu.addAction("Settings…")
         self.settings_action.triggered.connect(self.open_settings)
 
+        insert_menu = self.menuBar().addMenu("&Insert")
+        self.insert_image_action = insert_menu.addAction("&Image…")
+        self.insert_image_action.triggered.connect(self.insert_image_from_file)
+
         # Every tool in core.tools.ALL_TOOLS, one submenu per category. Built
         # from the registry, so the menu can't drift from the palette (#99).
         self.tools_menu = build_tools_menu(self.menuBar(), self.run_tool)
@@ -323,6 +347,9 @@ class MainWindow(QMainWindow):
         self.tabbed_editor.tab_text_changed.connect(self._on_active_text_changed)
         self.tabbed_editor.tab_context_menu_requested.connect(
             self._show_editor_context_menu
+        )
+        self.tabbed_editor.tab_status_message.connect(
+            lambda message: self.statusBar().showMessage(message, _IMAGE_STATUS_MS)
         )
         self._update_word_count()
 
@@ -377,6 +404,128 @@ class MainWindow(QMainWindow):
     def _active_markdown(self) -> str:
         tab = self.tabbed_editor.active_tab
         return tab.markdown() if tab is not None else ""
+
+    # -------------------------------------------------------------------------
+    # Images (#101)
+    # -------------------------------------------------------------------------
+
+    def bind_images(self, store: ImageStore) -> None:
+        """Bind the vault's images: tabs paste into it, the preview renders from it."""
+        self.image_store = store
+        self.tabbed_editor.set_image_store(store)
+        self.preview_document.set_store(store)
+        self._render_preview()
+
+    def insert_image_from_file(self) -> None:
+        """**Insert → Image…**: pick image files and insert them at the caret."""
+        if self.tabbed_editor.active_tab is None:
+            self.statusBar().showMessage("Open a note first", _IMAGE_STATUS_MS)
+            return
+        paths = self._choose_image_files()
+        if paths:
+            self.insert_image_files(paths)
+
+    def insert_image_files(self, paths: list[str]) -> bool:
+        """Store each file in ``paths`` and insert its Markdown at the caret."""
+        tab = self.tabbed_editor.active_tab
+        if tab is None or self.image_store is None:
+            self.statusBar().showMessage("Open a note first", _IMAGE_STATUS_MS)
+            return False
+        ratio = tab.source.devicePixelRatioF()
+        try:
+            snippets = [
+                ingest_file(self.image_store, path, device_pixel_ratio=ratio)
+                for path in paths
+            ]
+        except IngestError as error:
+            self.statusBar().showMessage(str(error), _IMAGE_STATUS_MS)
+            return False
+        tab.source.insertPlainText("\n\n".join(snippets))
+        return True
+
+    def _choose_image_files(self) -> list[str]:
+        """The file picker — the seam tests replace to avoid a modal dialog."""
+        patterns = " ".join(
+            f"*.{bytes(f).decode()}" for f in QImageReader.supportedImageFormats()
+        )
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Insert image", "", f"Images ({patterns})"
+        )
+        return paths
+
+    def build_preview_context_menu(self, pos: QPoint) -> QMenu:
+        """The preview's right-click menu; image actions on top when over an image.
+
+        ``pos`` is in viewport coordinates, as ``customContextMenuRequested``
+        reports it for a scroll area. Separate from the show method so tests can
+        inspect the menu without a modal loop.
+        """
+        menu = self.preview.createStandardContextMenu()
+        image = image_at(self.preview, pos)
+        if image is None:
+            return menu
+
+        copy = QAction("Copy image", menu)
+        copy.triggered.connect(lambda: self.copy_preview_image(image))
+        save = QAction("Save image as…", menu)
+        save.triggered.connect(lambda: self.save_preview_image(image))
+        reset = QAction("Reset to original size", menu)
+        reset.setEnabled(image.width is not None)
+        reset.triggered.connect(lambda: self.reset_preview_image_size(image))
+
+        first = menu.actions()[0] if menu.actions() else None
+        menu.insertActions(first, [copy, save, reset])
+        menu.insertSeparator(first)
+        return menu
+
+    def _show_preview_context_menu(self, pos: QPoint) -> None:
+        self.build_preview_context_menu(pos).exec(self.preview.viewport().mapToGlobal(pos))
+
+    def copy_preview_image(self, image: PreviewImage) -> bool:
+        """Put the full-resolution original of ``image`` on the clipboard."""
+        natural = self.preview_document.natural_image(image.image_id)
+        clipboard = QGuiApplication.clipboard()
+        if natural is None or clipboard is None:
+            return False
+        clipboard.setImage(natural)
+        self.statusBar().showMessage("Image copied", _IMAGE_STATUS_MS)
+        return True
+
+    def save_preview_image(self, image: PreviewImage) -> bool:
+        """Write ``image``'s stored bytes, unchanged, to a file the user picks."""
+        record = self.image_store.get(image.image_id) if self.image_store else None
+        if record is None:
+            return False
+        path = self._choose_save_path(f"image-{record.id}.{extension_for(record.mime)}")
+        if not path:
+            return False
+        try:
+            Path(path).write_bytes(record.data)
+        except OSError as error:
+            self.statusBar().showMessage(f"Couldn't save the image: {error.strerror}", _IMAGE_STATUS_MS)
+            return False
+        self.statusBar().showMessage(f"Saved {Path(path).name}", _IMAGE_STATUS_MS)
+        return True
+
+    def _choose_save_path(self, default_name: str) -> str:
+        """The save dialog — the seam tests replace to avoid a modal dialog."""
+        path, _ = QFileDialog.getSaveFileName(self, "Save image as", default_name)
+        return path
+
+    def reset_preview_image_size(self, image: PreviewImage) -> bool:
+        """Drop ``image``'s width so it renders at natural size — one undo step."""
+        tab = self.tabbed_editor.active_tab
+        if tab is None:
+            return False
+        ref = resolve_ref(tab.markdown(), image.ordinal, image.image_id, image.width)
+        if ref is None:
+            self.statusBar().showMessage(
+                "Couldn't tell which image that is — edit its width in the note text",
+                _IMAGE_STATUS_MS,
+            )
+            return False
+        apply_image_width(tab.source, ref, None)
+        return True
 
     # -------------------------------------------------------------------------
     # Focus mode
@@ -584,6 +733,10 @@ class MainWindow(QMainWindow):
         # requirement: no decrypted note text lingers after lock). clear_all
         # flushes each tab before removing it.
         self.tabbed_editor.clear_all()
+        # Decoded images are decrypted content too: drop them and the store.
+        self.image_store = None
+        self.tabbed_editor.set_image_store(None)
+        self.preview_document.set_store(None)
         self.repository = None
         self.current_notebook_id = None
         self.current_tag_id = None
