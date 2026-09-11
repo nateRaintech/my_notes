@@ -83,7 +83,7 @@ unreferenced images are reclaimed by a sweep rather than a cascade.
   returns the existing record without writing. `width`/`height` come from the caller,
   because only the UI layer has a `QImage` to measure — `core/` stays Qt-free.
 - `get(image_id) -> ImageRecord | None`
-- `sweep_orphans() -> SweepResult(count, bytes)` — see *Orphan sweep*.
+- `sweep_orphans() -> SweepResult(count, freed_bytes)` — see *Orphan sweep*.
 
 ## Reference format — `core/image_refs.py`
 
@@ -100,10 +100,13 @@ Functions:
 
 - `find_refs(markdown) -> list[ImageRef]` — every `mnimg:` image **Qt would render**, in
   document order, each with `image_id`, `width | None`, and the character span of its
-  URL. Skips fenced code blocks, indented code blocks and inline code, matching what the
-  preview shows as literal text.
-- `with_width(markdown, ref, width | None) -> (new_text, span)` — the span to replace and
-  its replacement; `None` removes `?w=`. The UI applies it as a surgical edit.
+  URL. Skips fenced code blocks and inline code, which the preview shows as literal
+  text. Indented (four-space) code blocks are *not* detected: telling them from nested
+  list items needs a full Markdown parser, and the verification below covers the gap.
+- `image_url(image_id, width | None) -> str` — the replacement for a ref's URL span;
+  `None` drops `?w=`. The UI applies it as a surgical edit over that span.
+- `resolve_ref(markdown, ordinal, image_id, width) -> ImageRef | None` — the
+  verified lookup described below.
 - `referenced_ids(markdown) -> set[int]` — deliberately **liberal**: any `mnimg:<id>`
   anywhere, including inside code. The sweep uses this, and over-keeping an image is
   harmless while under-keeping one destroys it.
