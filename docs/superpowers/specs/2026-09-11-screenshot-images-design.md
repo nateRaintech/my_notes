@@ -60,7 +60,7 @@ Confirmed headless against the real Qt:
 
 ```sql
 CREATE TABLE IF NOT EXISTS images (
-    id         INTEGER PRIMARY KEY,
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
     sha256     TEXT    NOT NULL UNIQUE,
     mime       TEXT    NOT NULL,
     width      INTEGER NOT NULL,   -- natural size in pixels, cached at insert
@@ -75,6 +75,11 @@ Images are **vault-global, not owned by a note** — there is no `note_id` colum
 refers to an image only through the URL text in its `body`. This is what lets the same
 screenshot pasted into five notes cost one blob (`sha256` is UNIQUE), and it is why
 unreferenced images are reclaimed by a sweep rather than a cascade.
+
+`id` is `AUTOINCREMENT`, so an id is **never reused** after a sweep. Without it SQLite
+hands the highest freed rowid to the next insert, and a stale `mnimg:<id>` (a line cut
+before a lock and pasted back after, say) would silently show a different, unrelated
+screenshot instead of the "missing image" placeholder.
 
 `core/images.py` is a new module rather than more methods on the 506-line `Repository`.
 `ImageStore(connection)`:
@@ -120,7 +125,7 @@ document — and `find_refs(source)[ordinal]`.
 
 `find_refs` and Qt's Markdown parser can disagree on edge cases (reference-style image
 links, raw HTML). So the match is **verified**: the ref at that ordinal must have the
-clicked image's id. If it doesn't, fall back to the only ref with that id and the same
+clicked image's id and width. If it doesn't, fall back to the only ref with that id and the same
 current width; if that is still ambiguous, show a status-bar message and edit nothing.
 Resizing the wrong image is worse than declining.
 
@@ -159,6 +164,12 @@ both the sharpest rendering and the size the screenshot appeared on screen. A re
 the blob, decode, scale to `w × devicePixelRatio`, tag the result with that ratio, and
 return it. Qt lays it out at `w` logical pixels, sharp at any display scaling.
 
+`w` is text the user types, and the preview re-renders on every keystroke — typing
+`?w=1000000` passes through `?w=100000` on the way. So the device-pixel width is
+**clamped** before it reaches Qt: at most 4 × the image's natural pixel width and at most
+16384 px, at least 1. Unclamped, a 400 × 200 image at `?w=100000` crashed the process and
+at `?w=30000` pinned 1.7 GB. If Qt still returns a null image, the placeholder is shown.
+
 `MainWindow.preview` is built before any vault is unlocked, so the document takes its
 store late via `set_store(store | None)`. Before a store is set, or for an id that no
 longer exists, it returns a small **"missing image"** placeholder — a visible failure,
@@ -166,16 +177,24 @@ never a silent blank.
 
 **The cache is a requirement, not polish.** `_on_active_text_changed → _render_preview →
 setMarkdown` rebuilds the whole document on every keystroke. Without a cache, each
-character typed re-queries SQLite, re-decodes and re-scales every image in the note. Two
-levels:
+character typed re-queries SQLite, re-decodes and re-scales every image in the note.
 
-- decoded natural images, keyed by image id;
-- scaled results, keyed by `(id, width, device pixel ratio)` — the ratio is part of the
-  key so moving the window to a different-DPI monitor re-renders correctly.
+**Only scaled renderings are cached**, keyed by `(id, requested width or None, device
+pixel ratio)` and looked up *before* anything is fetched or decoded, so a hit costs
+neither a query nor a decode. On a miss the full-resolution image is decoded
+transiently, scaled, and only the scaled result is kept. Caching the naturals too was
+tried and thrashed: four 4K screenshots (~33 MB decoded each) overflow the budget, after
+which every keystroke re-queried and re-decoded (~0.5 s each). **Copy image** decodes the
+original on demand, uncached. The ratio is part of the key, so after the window moves to
+a different-DPI monitor the image re-renders at the new ratio at the next edit or tab
+switch.
 
 Bounded by total decoded bytes (128 MB), least-recently-used first out. **`lock_session`
-clears it and detaches the store**: decoded images are decrypted content, and the vault's
-guarantee is that none survives a lock.
+clears it and detaches the store** — before it closes the tabs, since both lock paths
+have already closed the vault connection and each tab removal re-renders the next tab.
+Decoded images are decrypted content, and the vault's guarantee is that none survives a
+lock. `loadResource` is a Qt virtual, so any failure to fetch, decode or scale renders
+the placeholder rather than raising.
 
 ## Getting images out — preview context menu
 
@@ -244,8 +263,9 @@ an image shown as code inside a code block is text, so it has no handles.
 ## Testing
 
 **`core/` (no Qt):**
-- `image_refs`: inline code, fenced and indented code blocks are skipped; duplicates are
-  addressed by ordinal; malformed and missing `?w=`; non-`mnimg:` images left alone;
+- `image_refs`: fenced code blocks and inline code are skipped; indented code blocks are
+  not detected (see *Reference format*), and the ordinal verification covers the gap;
+  duplicates are addressed by ordinal; malformed and missing `?w=`; non-`mnimg:` images left alone;
   `with_width` add / change / remove; `referenced_ids` includes refs inside code.
 - `ImageStore`: add, dedup by hash, get, sweep removes only unreferenced images.
 - Migration 3 upgrades a v2 vault and is idempotent.
@@ -277,3 +297,6 @@ only check that proves the exe bundles them.
 - No downscale-on-paste option; bytes are always stored as received.
 - No `VACUUM` / "compact vault" command.
 - Images are not included in any export — there is no export feature yet.
+- An image whose decoded size exceeds Qt's allocation limit (about 256 MB decoded, e.g.
+  a very large photo well under the 20 MB file cap) shows the "missing image"
+  placeholder even though it was stored.
