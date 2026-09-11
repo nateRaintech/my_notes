@@ -41,7 +41,7 @@ jobs:
       # those tools actually produce, so CI needs them genuinely installed.
       # This list is not read from requirements.txt: keep the two in step.
       - name: Install tooling and GUI runtime
-        run: pip install ruff pytest PySide6 argon2-cffi "sqlcipher3>=0.6.2" pyyaml sqlparse
+        run: pip install ruff pytest PySide6 argon2-cffi "sqlcipher3>=0.6.2" pyyaml sqlparse pypdf
 
       - name: Lint
         run: ruff check .

@@ -32,6 +32,21 @@ See `CLAUDE.md` for the full design and architecture (strict `core/` logic vs `u
 
 ## Milestones
 
+### M11: Note Menu, Exports & Rich Inserts — `status: in progress`
+
+Act on the current note as a whole, and put richer content into it. A Note menu (disabled
+until a note is active) with Copy Text and exports to HTML, PDF, DOCX and Outlook; Insert
+gains Table, Graph and PDF import. Every insert type exports cleanly because all exports
+render through the preview's vault-backed document. Built in six parts, each with its own
+spec; part 1: `docs/superpowers/specs/2026-09-11-note-menu-exports-design.md`.
+
+- [ ] Note menu with Copy Text and export to HTML and PDF (#105)
+- [ ] Export a note to DOCX (#106)
+- [ ] Insert a table (#107)
+- [ ] Insert a graph — line, pie, bar, histogram — with editable data (#108)
+- [ ] Insert a PDF's text and images as a note (#109)
+- [ ] Export a note to Outlook as a draft email (#110)
+
 ### M10: Screenshots & Images in Notes — `status: in progress`
 
 Paste a screenshot from the clipboard into a note and resize it in place. Images are
