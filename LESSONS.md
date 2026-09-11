@@ -96,6 +96,10 @@ One dated bullet per lesson, newest at the top of its section. Keep each to a se
 - 2026-05-21 — `gh` is **not on PowerShell's PATH**; it lives at `C:\Users\Nate\bin\gh.exe`. The runner and docs call it by full path. From the Bash tool (git-bash) `gh` does resolve on PATH.
 - 2026-05-21 (RESOLVED 2026-05-22, spike #11) — SQLCipher on Windows + PyInstaller bundling *was* the project's biggest technical unknown. The M2 spike confirmed it works — but via the **`sqlcipher3>=0.6.2`** wheel, not the documented `sqlcipher3-binary` (which is Linux-only). See the Conventions bullet above for the full finding. Storage can now be built on SQLCipher; the AES-GCM fallback is not needed.
 
+- 2026-09-11 — **A `QTextDocument.loadResource` override bypasses Qt's resource cache**, and Qt calls it ~6× per render (each layout and paint pass). Anything expensive in it (decoding an image) needs its own cache, or a document that re-renders per keystroke stalls. See `ui/vault_document.py`. (#101)
+- 2026-09-11 — **Python string indices are not `QTextDocument` positions.** Qt counts UTF-16 code units, so one emoji shifts every later position by one. Convert with `ui.preview_images.utf16_offset` before placing a `QTextCursor` from a Python-side regex match. (#101)
+- 2026-09-11 — **Office apps put text *and* a picture of it on the clipboard.** An image-paste handler that prefers `hasImage()` turns every pasted Excel range into a screenshot; let `hasText()` win (`ui.image_ingest.wants_image_paste`). (#101)
+
 ## Anti-patterns
 
 - Seed lesson — **Do not write "editorial-pin" tests** that assert a doc/markdown list matches a code constant, AST-presence checks, or set-identity between prose and code. They never catch real bugs; they only fire on intentional human edits, creating a maintenance tax. (This is encoded as a hard rule in `autodev.md` → Priority 5B "Prohibited test patterns"; recorded here so the reasoning travels with the project. If cross-file drift ever causes a *real* bug, fix it with one CI script, not per-pair tests.)

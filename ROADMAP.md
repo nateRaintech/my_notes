@@ -39,7 +39,7 @@ stored inside the encrypted vault, never on disk in the clear; resizing changes 
 display width recorded in the Markdown, so it is always reversible. Design:
 `docs/superpowers/specs/2026-09-11-screenshot-images-design.md`.
 
-- [ ] Paste, drop, or insert an image into a note; it renders sharply in the preview and can be copied or saved back out; images no note uses are reclaimed on unlock (#101)
+- [x] Paste, drop, or insert an image into a note; it renders sharply in the preview and can be copied or saved back out; images no note uses are reclaimed on unlock _(done: `images` table (schema v3) + `core/images.py` / `core/image_refs.py`; paste, drop and Insert → Image via `ui/note_source.py` / `ui/image_ingest.py`; preview rendering via `ui/vault_document.py`; copy / save / reset from the preview; orphan sweep in `app._bind_vault`.)_ (#101)
 - [ ] Resize an image by dragging corner handles in the preview, with undo (#102)
 
 ### M9: Text Tools Suite & Dark Theme Completion — `status: done` (completed 2026-08-21)
