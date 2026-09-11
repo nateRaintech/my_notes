@@ -28,10 +28,10 @@ if TYPE_CHECKING:
     from core.images import ImageStore
 
 #: The character Qt puts in a block's text where an image (or other object) is.
-OBJECT_REPLACEMENT = "￼"
+OBJECT_REPLACEMENT = "\ufffc"
 
 # Qt's soft line separator inside a block.
-_LINE_SEPARATOR = " "
+_LINE_SEPARATOR = "\u2028"
 
 _BULLETS = {
     QTextListFormat.Style.ListDisc,
