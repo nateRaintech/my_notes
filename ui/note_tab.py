@@ -16,7 +16,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Callable
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QPoint, Qt, Signal
 from PySide6.QtWidgets import QPlainTextEdit, QVBoxLayout, QWidget
 
 from core.autosave import DEFAULT_DEBOUNCE_SECONDS
@@ -41,6 +41,10 @@ class NoteTab(QWidget):
     orphan_edit_detected = Signal(str)
     #: Re-emitted from the source pane on every edit (for preview / word count).
     text_changed = Signal()
+    #: The source pane was right-clicked, at the given widget-relative position.
+    #: Re-emitted so the window can append its Tools submenu to Qt's standard
+    #: editor context menu (#99) without the tab knowing what a tool is.
+    context_menu_requested = Signal(QPoint)
 
     def __init__(
         self,
@@ -64,6 +68,9 @@ class NoteTab(QWidget):
         )
         self._controller.orphan_edit_detected.connect(self.orphan_edit_detected)
         self.source.textChanged.connect(self.text_changed)
+
+        self.source.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.source.customContextMenuRequested.connect(self.context_menu_requested)
 
     # -- editor seam used by AutoSaveController -----------------------------
     def markdown(self) -> str:

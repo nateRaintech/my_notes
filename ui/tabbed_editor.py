@@ -15,17 +15,21 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Callable
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QPoint, QSize, Signal
 from PySide6.QtWidgets import (
     QLabel,
     QStackedWidget,
+    QTabBar,
     QTabWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from core.autosave import DEFAULT_DEBOUNCE_SECONDS
 from core.text import derive_title
+from core.theme import DEFAULT_THEME
+from ui.icons import cross_icon, glyph_color
 from ui.note_tab import NoteTab
 
 if TYPE_CHECKING:
@@ -47,6 +51,8 @@ class TabbedEditor(QWidget):
     tab_text_changed = Signal()
     #: An unbound tab got its first keystroke: (NoteTab, text).
     tab_orphan_edit = Signal(object, str)
+    #: A tab's editing surface was right-clicked, at the given position (#99).
+    tab_context_menu_requested = Signal(QPoint)
 
     def __init__(
         self,
@@ -63,6 +69,8 @@ class TabbedEditor(QWidget):
 
         # The tab we were last on, so we can flush it when the user switches away.
         self._active_tab: NoteTab | None = None
+        # The theme currently applied, so tabs opened later get matching icons.
+        self._theme = DEFAULT_THEME
 
         self._tabs = QTabWidget()
         self._tabs.setTabsClosable(True)
@@ -84,6 +92,39 @@ class TabbedEditor(QWidget):
 
     def set_repository(self, repository: Repository) -> None:
         self._repository = repository
+
+    # -- theming ------------------------------------------------------------
+    def apply_theme(self, theme: str) -> None:
+        """Repaint the per-tab close buttons for ``theme``.
+
+        Qt draws the close button from the *native* style, whose glyph is a dark
+        X meant for a light window — invisible on the dark tab strip (#98). A
+        stylesheet cannot fix it without an image file, so each tab gets a real
+        :class:`QToolButton` carrying a glyph painted in the theme's colour
+        (:mod:`ui.icons`). The theme is remembered so tabs opened later match.
+        """
+        self._theme = theme
+        for index in range(self._tabs.count()):
+            self._install_close_button(index)
+
+    def _install_close_button(self, index: int) -> None:
+        """Give tab ``index`` a themed close button in place of Qt's."""
+        tab = self._tabs.widget(index)
+        if tab is None:
+            return
+        button = QToolButton()
+        button.setObjectName("tabCloseButton")
+        button.setIcon(cross_icon(glyph_color(self._theme)))
+        button.setIconSize(QSize(12, 12))
+        button.setAutoRaise(True)
+        button.setToolTip("Close tab")
+        button.setFixedSize(QSize(18, 18))
+        # Bound to the *widget*, not the index: closing a tab renumbers the ones
+        # after it, so a captured index would soon close the wrong note.
+        button.clicked.connect(lambda _checked=False, t=tab: self.close_tab(t))
+        self._tabs.tabBar().setTabButton(
+            index, QTabBar.ButtonPosition.RightSide, button
+        )
 
     # -- queries ------------------------------------------------------------
     def count(self) -> int:
@@ -110,7 +151,8 @@ class TabbedEditor(QWidget):
             return existing
         tab = self._make_tab()
         tab.load(note)
-        self._tabs.addTab(tab, _title_for(note))
+        index = self._tabs.addTab(tab, _title_for(note))
+        self._install_close_button(index)
         self._tabs.setCurrentWidget(tab)
         self._update_stack()
         return tab
@@ -118,7 +160,8 @@ class TabbedEditor(QWidget):
     def new_blank_tab(self) -> NoteTab:
         """Open an empty, unbound tab (for New Note)."""
         tab = self._make_tab()
-        self._tabs.addTab(tab, "Untitled")
+        index = self._tabs.addTab(tab, "Untitled")
+        self._install_close_button(index)
         self._tabs.setCurrentWidget(tab)
         self._update_stack()
         return tab
@@ -170,6 +213,7 @@ class TabbedEditor(QWidget):
         tab.orphan_edit_detected.connect(
             lambda text, t=tab: self.tab_orphan_edit.emit(t, text)
         )
+        tab.context_menu_requested.connect(self.tab_context_menu_requested)
         return tab
 
     def _on_current_changed(self, _index: int) -> None:

@@ -1,9 +1,27 @@
-/* Dark theme for my_notes (M5).
+/* Dark theme for my_notes (M5, completed in M9).
  *
  * Loaded by core.theme.load_stylesheet("dark") and applied to the main window
  * via MainWindow.apply_theme(). Child dialogs parented to the window (the
- * quick-switcher, the import wizard) inherit these rules. The "light" theme is
- * the native Qt look — an empty stylesheet — so toggling back clears all of this.
+ * quick-switcher, the tool palette, the import wizard) inherit these rules. The
+ * "light" theme is the native Qt look — an empty stylesheet — so toggling back
+ * clears all of this.
+ *
+ * IMPORTANT (#98): every widget class the app puts on screen needs a rule here.
+ * A class this file doesn't name falls back to the native Windows style, which
+ * is drawn for a *light* palette — that is how the tab bar ended up painting
+ * dark text on a dark background. tests/test_theme_coverage.py walks the live
+ * widget tree and fails if a class appears with no selector, so adding a widget
+ * without styling it can't ship silently again.
+ *
+ * Palette
+ *   #1e1e1e  base       — window and editor background
+ *   #252526  surface    — chrome: menus, lists, status bar, tab strip
+ *   #2d2d2d  raised     — inactive tabs, hovered chrome
+ *   #3c3c3c  border     — separators and outlines
+ *   #d4d4d4  text
+ *   #9d9d9d  muted text — inactive tabs, status bar
+ *   #094771  selection
+ *   #0e639c  accent     — buttons, the active tab's underline
  */
 
 QWidget {
@@ -15,9 +33,21 @@ QWidget {
 
 QMainWindow,
 QDialog,
-QWizard {
+QWizard,
+QWizardPage {
     background-color: #1e1e1e;
 }
+
+QLabel {
+    background-color: transparent;
+    color: #d4d4d4;
+}
+
+QLabel:disabled {
+    color: #6d6d6d;
+}
+
+/* -- Menus ---------------------------------------------------------------- */
 
 QMenuBar {
     background-color: #252526;
@@ -38,26 +68,109 @@ QMenu::item:selected {
     background-color: #094771;
 }
 
-QStatusBar {
-    background-color: #252526;
-    color: #9d9d9d;
+QMenu::item:disabled {
+    color: #6d6d6d;
 }
 
-QToolTip {
+/* The Tools menu is deep (a submenu per category); without an explicit rule the
+ * separators and the submenu arrow are drawn by the native style. */
+QMenu::separator {
+    height: 1px;
+    background-color: #3c3c3c;
+    margin: 4px 8px;
+}
+
+QMenu::right-arrow {
+    width: 8px;
+    height: 8px;
+}
+
+/* -- Tabs (#98: the reported bug) ----------------------------------------- */
+
+QTabWidget::pane {
+    border: 1px solid #3c3c3c;
+    background-color: #1e1e1e;
+    top: -1px;
+}
+
+QTabBar {
+    background-color: #252526;
+    qproperty-drawBase: 0;
+}
+
+QTabBar::tab {
+    background-color: #2d2d2d;
+    color: #9d9d9d;
+    border: 1px solid #252526;
+    border-bottom: none;
+    padding: 6px 12px;
+    margin-right: 1px;
+}
+
+QTabBar::tab:selected {
+    background-color: #1e1e1e;
+    color: #ffffff;
+    border-color: #3c3c3c;
+    border-bottom: 2px solid #0e639c;
+}
+
+QTabBar::tab:hover:!selected {
+    background-color: #333333;
+    color: #d4d4d4;
+}
+
+QTabBar::tab:disabled {
+    color: #6d6d6d;
+}
+
+/* The close button's glyph is painted in ui/icons.py rather than loaded from a
+ * file: a QSS `image:` url would have to resolve against the process's working
+ * directory, which is not something a frozen --onefile exe can rely on. */
+QTabBar::close-button {
+    subcontrol-position: right;
+}
+
+/* -- Docks ---------------------------------------------------------------- */
+
+/* The dock title-bar button glyphs are repainted in ui/icons.py, for the same
+ * reason as the tab close button below: a QSS `titlebar-close-icon: url(...)`
+ * would have to resolve against the working directory. */
+QDockWidget {
+    color: #d4d4d4;
+}
+
+QDockWidget::title {
     background-color: #252526;
     color: #d4d4d4;
-    border: 1px solid #3c3c3c;
+    border-bottom: 1px solid #3c3c3c;
+    padding: 5px 8px;
+    text-align: left;
 }
 
-QSplitter::handle {
-    background-color: #3c3c3c;
+QDockWidget::close-button,
+QDockWidget::float-button {
+    background-color: transparent;
+    border: none;
+    icon-size: 12px;
+    subcontrol-position: top right;
 }
+
+QDockWidget::close-button:hover,
+QDockWidget::float-button:hover {
+    background-color: #3c3c3c;
+    border-radius: 2px;
+}
+
+/* -- Text surfaces -------------------------------------------------------- */
 
 QTreeWidget,
+QTreeView,
 QListWidget,
+QListView,
 QLineEdit,
 QPlainTextEdit,
-QTextEdit {
+QTextEdit,
+QAbstractScrollArea {
     background-color: #252526;
     color: #d4d4d4;
     border: 1px solid #3c3c3c;
@@ -75,14 +188,29 @@ QLineEdit {
     padding: 3px;
 }
 
+QLineEdit:focus,
+QPlainTextEdit:focus,
+QTextEdit:focus {
+    border: 1px solid #0e639c;
+}
+
+QLineEdit:disabled {
+    background-color: #2a2a2a;
+    color: #6d6d6d;
+}
+
 QTreeWidget::item:selected,
-QListWidget::item:selected {
+QTreeView::item:selected,
+QListWidget::item:selected,
+QListView::item:selected {
     background-color: #094771;
     color: #ffffff;
 }
 
 QTreeWidget::item:hover,
-QListWidget::item:hover {
+QTreeView::item:hover,
+QListWidget::item:hover,
+QListView::item:hover {
     background-color: #2a2d2e;
 }
 
@@ -93,6 +221,32 @@ QHeaderView::section {
     border-bottom: 1px solid #3c3c3c;
     padding: 4px;
 }
+
+QStatusBar {
+    background-color: #252526;
+    color: #9d9d9d;
+}
+
+QStatusBar::item {
+    border: none;
+}
+
+QToolTip {
+    background-color: #252526;
+    color: #d4d4d4;
+    border: 1px solid #3c3c3c;
+}
+
+QSplitter::handle {
+    background-color: #3c3c3c;
+}
+
+QFrame[frameShape="4"],  /* HLine */
+QFrame[frameShape="5"] { /* VLine */
+    color: #3c3c3c;
+}
+
+/* -- Buttons -------------------------------------------------------------- */
 
 QPushButton {
     background-color: #0e639c;
@@ -114,6 +268,172 @@ QPushButton:disabled {
     background-color: #3c3c3c;
     color: #777777;
 }
+
+QDialogButtonBox {
+    background-color: transparent;
+}
+
+QToolButton {
+    background-color: transparent;
+    color: #d4d4d4;
+    border: none;
+    padding: 2px;
+    border-radius: 2px;
+}
+
+QToolButton:hover {
+    background-color: #3c3c3c;
+}
+
+QToolButton:pressed {
+    background-color: #094771;
+}
+
+/* -- Inputs --------------------------------------------------------------- */
+
+QComboBox {
+    background-color: #2d2d2d;
+    color: #d4d4d4;
+    border: 1px solid #3c3c3c;
+    border-radius: 2px;
+    padding: 4px 8px;
+    min-width: 6em;
+}
+
+QComboBox:hover {
+    border-color: #0e639c;
+}
+
+QComboBox:disabled {
+    color: #6d6d6d;
+}
+
+QComboBox::drop-down {
+    border: none;
+    width: 18px;
+}
+
+/* Qt draws the popup as a separate top-level view, so it needs its own colours
+ * — without this it inherits the native (light) list palette. */
+QComboBox QAbstractItemView {
+    background-color: #252526;
+    color: #d4d4d4;
+    border: 1px solid #3c3c3c;
+    selection-background-color: #094771;
+    selection-color: #ffffff;
+}
+
+QSpinBox,
+QDoubleSpinBox {
+    background-color: #2d2d2d;
+    color: #d4d4d4;
+    border: 1px solid #3c3c3c;
+    border-radius: 2px;
+    padding: 3px 4px;
+}
+
+QSpinBox:focus,
+QDoubleSpinBox:focus {
+    border-color: #0e639c;
+}
+
+QSpinBox:disabled,
+QDoubleSpinBox:disabled {
+    color: #6d6d6d;
+}
+
+QSpinBox::up-button,
+QSpinBox::down-button,
+QDoubleSpinBox::up-button,
+QDoubleSpinBox::down-button {
+    background-color: #3c3c3c;
+    border: none;
+    width: 14px;
+}
+
+QSpinBox::up-button:hover,
+QSpinBox::down-button:hover,
+QDoubleSpinBox::up-button:hover,
+QDoubleSpinBox::down-button:hover {
+    background-color: #4f4f4f;
+}
+
+QCheckBox,
+QRadioButton {
+    background-color: transparent;
+    color: #d4d4d4;
+    spacing: 7px;
+}
+
+QCheckBox:disabled,
+QRadioButton:disabled {
+    color: #6d6d6d;
+}
+
+QCheckBox::indicator,
+QRadioButton::indicator {
+    width: 14px;
+    height: 14px;
+    background-color: #2d2d2d;
+    border: 1px solid #6d6d6d;
+}
+
+QCheckBox::indicator {
+    border-radius: 2px;
+}
+
+QRadioButton::indicator {
+    border-radius: 8px;
+}
+
+QCheckBox::indicator:hover,
+QRadioButton::indicator:hover {
+    border-color: #0e639c;
+}
+
+/* No tick image: a QSS `image:` url can't be resolved reliably from a frozen
+ * --onefile exe, so a checked box is shown as a filled accent swatch instead. */
+QCheckBox::indicator:checked,
+QRadioButton::indicator:checked {
+    background-color: #0e639c;
+    border-color: #0e639c;
+}
+
+QCheckBox::indicator:disabled,
+QRadioButton::indicator:disabled {
+    background-color: #2a2a2a;
+    border-color: #4a4a4a;
+}
+
+QGroupBox {
+    color: #d4d4d4;
+    border: 1px solid #3c3c3c;
+    border-radius: 3px;
+    margin-top: 10px;
+    padding-top: 8px;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 8px;
+    padding: 0 4px;
+    color: #9d9d9d;
+}
+
+QProgressBar {
+    background-color: #2d2d2d;
+    color: #d4d4d4;
+    border: 1px solid #3c3c3c;
+    border-radius: 2px;
+    text-align: center;
+}
+
+QProgressBar::chunk {
+    background-color: #0e639c;
+}
+
+/* -- Scrollbars ----------------------------------------------------------- */
 
 QScrollBar:vertical {
     background-color: #1e1e1e;
@@ -155,4 +475,21 @@ QScrollBar::handle:horizontal:hover {
 QScrollBar::add-line:horizontal,
 QScrollBar::sub-line:horizontal {
     width: 0;
+}
+
+QScrollBar::add-page,
+QScrollBar::sub-page {
+    background: transparent;
+}
+
+/* -- Misc ----------------------------------------------------------------- */
+
+QStackedWidget {
+    background-color: #1e1e1e;
+}
+
+QSizeGrip {
+    background-color: transparent;
+    width: 12px;
+    height: 12px;
 }

@@ -10,6 +10,12 @@ sqlcipher3>=0.6.2  # SQLCipher-backed SQLite driver — whole-DB encryption at r
                    # to install on the Windows ship target. 0.6.2 is the first
                    # sqlcipher3 release with prebuilt Windows wheels (spike #11).
 argon2-cffi        # Argon2id key derivation for the master password
+pyyaml             # JSON<->YAML conversion in the tools suite (M9). Imported
+                   # lazily inside the tool, so a missing install degrades to a
+                   # message instead of breaking core.tools; PyInstaller can't
+                   # see that import, hence the hiddenimports in my_notes.spec.
+sqlparse           # SQL formatting in the tools suite (M9). Same lazy-import
+                   # and hiddenimports note as pyyaml.
 
 # --- Dev / build / CI ---
 pytest             # test runner

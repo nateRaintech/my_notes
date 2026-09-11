@@ -26,6 +26,11 @@ no code is carried over.
 - **Import** your old notes from a legacy `notes.db` via a guided wizard.
 - **Auto-lock** — the vault locks and re-prompts for the master password after a
   configurable idle timeout, and optionally when the window is minimized.
+- **A suite of ~60 text and data tools** — select a block and reformat it in place:
+  pretty-print or minify JSON / XML / SQL, encode and decode Base64 / URL / hex,
+  decode a JWT, hash a selection, convert case, sort and dedupe lines, align a
+  Markdown table, convert JSON to YAML, insert a UUID or timestamp. Reachable from
+  the **Tools** menu, the editor's right-click menu, and a **Ctrl+Shift+T** palette.
 - **Polish** — an optional dark theme, keyboard-first navigation, a live word count in
   the status bar, and a Settings dialog.
 - **Shippable** — packages to a single-file Windows `.exe` with PyInstaller.
@@ -33,14 +38,15 @@ no code is carried over.
 AI features are intentionally out of scope for this version — the goal is to make core
 note-taking excellent.
 
-> **Current limitations (honest status).** The data model supports **tags**, but they
-> are not yet exposed in the UI, and there is no in-UI way to **delete** a note yet
-> (notebooks can be deleted; notes can be moved between them). See
-> [`ROADMAP.md`](ROADMAP.md) for what's planned next.
+See [`ROADMAP.md`](ROADMAP.md) for what's planned next.
 
 ## Stack
 
 - [PySide6](https://doc.qt.io/qtforpython/) — Qt 6 GUI (LGPL)
+- [`pyyaml`](https://pypi.org/project/PyYAML/) and
+  [`sqlparse`](https://pypi.org/project/sqlparse/) — YAML conversion and SQL
+  formatting for the tools suite. Both are imported lazily, so a missing one
+  disables just its own tools rather than the app
 - [`sqlcipher3`](https://pypi.org/project/sqlcipher3/) (`>=0.6.2`) — SQLCipher-backed,
   whole-database encryption. **Not** `sqlcipher3-binary`, which ships Linux-only wheels
   and won't install on the Windows ship target (confirmed by the M2 spike, see
@@ -137,6 +143,40 @@ after that period of inactivity (key wiped from memory) and re-prompts for the m
 password in place. With *lock on minimize* enabled, minimizing the window locks the
 vault and you're re-prompted when you restore it.
 
+**Text & data tools.** Select a block of text and apply a tool to it — or select
+nothing and the tool applies to the whole note. This is the Notepad++ "format this
+JSON" interaction, generalised to about sixty tools:
+
+| Group | What's in it |
+|-------|--------------|
+| JSON | Format (2-space / 4-space / tabs), minify, sort keys, validate, escape and unescape as a string literal |
+| XML · SQL | Format and minify each |
+| Markdown | Align a table's pipes, build a table from pasted CSV/TSV, escape and unescape markup |
+| Encode / Decode | Base64 and Base64-URL, percent-encoding, HTML entities, hex (plain and spaced), JWT decode |
+| Hash | MD5, SHA-1, SHA-256, SHA-512 — the digest is copied to the clipboard |
+| Case | UPPER, lower, Title, Sentence, camelCase, PascalCase, snake_case, kebab-case, CONSTANT_CASE |
+| Lines | Sort (alphabetical, case-insensitive, numeric, natural), remove duplicates, remove blank lines, trim trailing whitespace, reverse, number, join, wrap at 80, count |
+| Convert | JSON to YAML and back, Unix epoch to ISO-8601 and back |
+| Insert | UUID v4 (plain or braced), timestamp (local or UTC), today's date |
+
+Three ways in, all showing the same tools:
+
+- **Tools menu**, grouped into a submenu per category.
+- **Right-click in the editor** — the standard menu, with a *Tools* submenu appended.
+- **`Ctrl+Shift+T`** opens a search box over every tool. Type "fmt json", "b64", "sort",
+  "guid" — it matches names, categories, and keywords.
+
+A few things worth knowing:
+
+- **One `Ctrl+Z` takes it back.** However large the block, a tool is a single undo step.
+- **The result stays selected**, so tools chain — format, then sort keys, then minify.
+- **A tool that can't do the job changes nothing.** Run *Format JSON* on something that
+  isn't JSON and your text is left exactly as it was, with the status bar reporting
+  where it failed: `Invalid JSON: expecting ',' (line 4, column 12)`.
+- Tools that only *report* — the hashes, *Validate JSON*, *Text statistics*, the
+  timestamp conversions — never modify the note; their result goes to the status bar and
+  the clipboard.
+
 ### Keyboard shortcuts
 
 | Shortcut | Action |
@@ -147,6 +187,12 @@ vault and you're re-prompted when you restore it.
 | `Ctrl+1` | Focus the notebooks tree |
 | `Ctrl+2` | Focus the note list |
 | `Ctrl+3` | Focus the editor |
+| `Ctrl+W` | Close the current tab |
+| `Ctrl+Shift+T` | Tool palette — search every text/data tool |
+| `Ctrl+Shift+1` | Show/hide the notebooks panel |
+| `Ctrl+Shift+2` | Show/hide the note list panel |
+| `Ctrl+Shift+4` | Show/hide the preview panel |
+| `Ctrl+Shift+F` | Focus mode — hide every panel but the editor |
 
 ### Where your data lives
 
@@ -214,7 +260,12 @@ my_notes/
 │   ├── settings.py     # persistent app-settings model (load/save JSON)
 │   ├── theme.py        # QSS theme loader (Qt-free)
 │   ├── autosave.py     # debounce/persist policy for auto-save
-│   └── text.py         # title derivation + word count
+│   ├── text.py         # title derivation + word count
+│   └── tools/          # the text/data tool suite — pure str -> str transforms
+│       ├── base.py     #   the Tool value object + ToolError
+│       ├── registry.py #   ALL_TOOLS: the one list every UI surface is built from
+│       └── ...         #   json_tools, xml_tools, sql_tools, md_tools,
+│                       #   encoding, text_tools, convert
 ├── ui/           # PySide6 only
 │   ├── main_window.py     # 3-pane shell (notebooks | note list + search | editor)
 │   ├── unlock_dialog.py   # create-vault / unlock prompt
@@ -222,8 +273,15 @@ my_notes/
 │   ├── quick_switcher.py  # Ctrl+P fuzzy note switcher
 │   ├── import_wizard.py   # guided legacy-notes.db import
 │   ├── settings_dialog.py # Settings dialog
+│   ├── tabbed_editor.py   # one tab per open note
+│   ├── note_tab.py        # a single tab: editor surface + its auto-saver
+│   ├── tag_editor.py      # per-note tag assignment
+│   ├── tools_menu.py      # Tools menu + editor context menu, from the registry
+│   ├── tool_palette.py    # Ctrl+Shift+T fuzzy tool search
+│   ├── tool_runner.py     # selection -> tool -> undoable replace
+│   ├── icons.py           # theme-coloured icons painted at runtime
 │   ├── autosave.py        # QTimer-driven auto-save controller
-│   └── idle_lock.py        # idle/activity-driven auto-lock controller
+│   └── idle_lock.py       # idle/activity-driven auto-lock controller
 ├── resources/    # QSS theme (dark.qss)
 └── tests/        # pytest suite (core/ unit tests + headless Qt tests)
 ```
