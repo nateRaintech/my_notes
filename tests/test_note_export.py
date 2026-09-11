@@ -3,6 +3,7 @@
 import base64
 import os
 import re
+import stat
 
 import pytest
 from sqlcipher3 import dbapi2 as sqlcipher
@@ -72,6 +73,16 @@ def test_note_html_blanks_a_missing_image_but_keeps_its_alt(qapp, store):
     assert 'alt="gone"' in html
 
 
+def test_note_html_blanks_an_image_the_store_cannot_fetch(qapp):
+    class FailingStore:
+        def get(self, image_id):
+            raise RuntimeError("the vault connection is closed")
+
+    html = note_html("![gone](mnimg:1)", FailingStore(), title="t")
+    assert 'src=""' in html
+    assert 'alt="gone"' in html
+
+
 def test_note_html_accepts_a_custom_image_source(qapp, store, record):
     html = note_html(_note(record), store, title="t", image_src=lambda r: f"cid:img{r.id}")
     assert f'src="cid:img{record.id}"' in html
@@ -110,6 +121,30 @@ def test_write_pdf_text_is_real_text(qapp, store, record, tmp_path):
     assert "Some bold text." in text
 
 
+def test_write_pdf_numbers_the_pages_of_a_long_note(qapp, store, tmp_path):
+    path = tmp_path / "long.pdf"
+    write_pdf("\n\n".join(f"Paragraph {i}." for i in range(400)), store, path, title="Long")
+
+    reader = pypdf.PdfReader(str(path))
+    assert len(reader.pages) > 1
+    if not QFontDatabase.families():
+        pytest.skip("this Qt platform has no fonts, so the PDF has no text")
+    assert "2" in reader.pages[1].extract_text()
+
+
 def test_write_pdf_to_a_missing_folder_raises(qapp, store, tmp_path):
     with pytest.raises(OSError):
         write_pdf("x", store, tmp_path / "no-such-folder" / "note.pdf", title="t")
+
+
+def test_write_pdf_over_a_read_only_file_raises_and_keeps_the_original(qapp, store, tmp_path):
+    path = tmp_path / "locked.pdf"
+    original = b"the original file" * 3
+    path.write_bytes(original)
+    os.chmod(path, stat.S_IREAD)
+    try:
+        with pytest.raises(OSError):
+            write_pdf("# Title\n\nSome text.", store, path, title="Title")
+        assert path.read_bytes() == original
+    finally:
+        os.chmod(path, stat.S_IWRITE)
