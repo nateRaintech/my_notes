@@ -160,7 +160,7 @@ git commit -m "add safe_filename for export file names (refs #105)" -m "<trailer
 **Interfaces:**
 - Consumes: `VaultTextDocument(parent=None, *, device_pixel_ratio=callable)` with `.set_store(store | None)` (`ui/vault_document.py`); `ImageStore` (`core/images.py`); `png_bytes` (`ui/image_ingest.py`, tests only).
 - Produces:
-  - `OBJECT_REPLACEMENT = "￼"`
+  - `OBJECT_REPLACEMENT = "\ufffc"`
   - `render_document(markdown: str, store: ImageStore | None, *, device_pixel_ratio: float = 1.0) -> VaultTextDocument`
   - `plain_text(document: QTextDocument) -> str`
 
@@ -288,10 +288,10 @@ if TYPE_CHECKING:
     from core.images import ImageStore
 
 #: The character Qt puts in a block's text where an image (or other object) is.
-OBJECT_REPLACEMENT = "￼"
+OBJECT_REPLACEMENT = "\ufffc"
 
 # Qt's soft line separator inside a block.
-_LINE_SEPARATOR = " "
+_LINE_SEPARATOR = "\u2028"
 
 _BULLETS = {
     QTextListFormat.Style.ListDisc,
@@ -970,7 +970,7 @@ In `_on_active_tab_changed`, add `self._update_note_actions()` as its last line.
 Run: `$PY -m pytest tests/test_note_menu.py tests/test_image_window.py tests/test_main_window_layout.py tests/test_theme_coverage.py tests/test_idle_lock.py tests/test_new_note.py -v`
 Expected: all PASS.
 
-If `test_copy_text_puts_the_readable_text_on_the_clipboard` shows a different character count, recount `"Plan\n- ship it"` (13 characters). The expected text is what matters; don't change it to fit.
+If `test_copy_text_puts_the_readable_text_on_the_clipboard` shows a different character count, recount `"Plan\n- ship it"` (14 characters). The expected text is what matters; don't change it to fit.
 
 - [ ] **Step 8: Commit**
 
