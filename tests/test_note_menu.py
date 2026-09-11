@@ -153,6 +153,53 @@ def test_a_failed_export_is_reported(qapp, window, repo, tmp_path, monkeypatch):
     assert window.statusBar().currentMessage().startswith("Couldn't export")
 
 
+def test_a_failed_export_reports_the_reason_without_the_path(
+    qapp, window, repo, tmp_path, monkeypatch
+):
+    bad = str(tmp_path / "missing" / "x.html")
+    monkeypatch.setattr(window, "_choose_export_path", lambda name, file_filter: bad)
+    _open(qapp, window, repo, "x")
+
+    assert window.export_note_html() is False
+    message = window.statusBar().currentMessage()
+    assert message == "Couldn't export: No such file or directory"
+    assert os.sep not in message
+
+
+def test_an_unexpected_export_failure_is_reported_instead_of_raised(
+    qapp, window, repo, tmp_path, monkeypatch
+):
+    _export_to(monkeypatch, window, tmp_path, [])
+    _open(qapp, window, repo, "x")
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("the vault connection is closed")
+
+    monkeypatch.setattr("ui.main_window.write_html", boom)
+
+    assert window.export_note_html() is False
+    message = window.statusBar().currentMessage()
+    assert message == "Couldn't export: the vault connection is closed"
+
+
+def test_an_export_is_cancelled_when_the_vault_locks_during_the_dialog(
+    qapp, window, repo, tmp_path, monkeypatch
+):
+    """The file dialog runs a nested event loop, so the idle-lock can fire inside it."""
+    path = tmp_path / "note.html"
+
+    def lock_then_choose(default_name, file_filter):
+        window.lock_session()
+        return str(path)
+
+    monkeypatch.setattr(window, "_choose_export_path", lock_then_choose)
+    _open(qapp, window, repo, "# Secret\n\nthe decrypted body")
+
+    assert window.export_note_html() is False
+    assert not path.exists()
+    assert "lock" in window.statusBar().currentMessage().lower()
+
+
 def test_note_actions_do_nothing_without_a_note(window):
     assert window.copy_note_text() is False
     assert window.export_note_html() is False
