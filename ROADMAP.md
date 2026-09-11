@@ -40,7 +40,7 @@ gains Table, Graph and PDF import. Every insert type exports cleanly because all
 render through the preview's vault-backed document. Built in six parts, each with its own
 spec; part 1: `docs/superpowers/specs/2026-09-11-note-menu-exports-design.md`.
 
-- [ ] Note menu with Copy Text and export to HTML and PDF (#105)
+- [x] Note menu with Copy Text and export to HTML and PDF _(done: `ui/note_render.py` (fresh vault-backed document + plain text), `ui/note_export.py` (self-contained HTML with data-URI images; Letter PDF via QPdfWriter, images at 2x), Note menu in `ui/main_window.py`, `core.text.safe_filename`.)_ (#105)
 - [ ] Export a note to DOCX (#106)
 - [ ] Insert a table (#107)
 - [ ] Insert a graph — line, pie, bar, histogram — with editable data (#108)
