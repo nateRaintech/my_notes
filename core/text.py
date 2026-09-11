@@ -16,6 +16,9 @@ import re
 # run of seven or more '#' is literal text — both fall out of the {1,6} bound.
 _ATX_MARKER = re.compile(r"^(#{1,6})(?:\s|$)")
 
+# Characters Windows forbids in file names, plus ASCII control characters.
+_UNSAFE_FILENAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
 
 def derive_title(markdown: str, *, max_length: int = 120, fallback: str = "Untitled") -> str:
     """Derive a human-readable title from a note's Markdown body.
@@ -61,3 +64,17 @@ def count_words(text: str) -> int:
     return sum(
         1 for token in text.split() if any(char.isalnum() for char in token)
     )
+
+
+def safe_filename(title: str, *, max_length: int = 100, fallback: str = "note") -> str:
+    """Turn a note title into a default file name stem (no extension).
+
+    Replaces the characters Windows rejects in file names — and control
+    characters — with ``_``, collapses whitespace, caps the length, and trims
+    trailing dots and spaces (Windows silently drops them, which would change
+    the name the user saw in the dialog). Returns ``fallback`` if nothing usable
+    is left. Used for the export dialogs' suggested file names (#105).
+    """
+    stem = " ".join(_UNSAFE_FILENAME.sub("_", title).split())
+    stem = stem[:max_length].rstrip(" .")
+    return stem or fallback
