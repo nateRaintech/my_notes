@@ -25,6 +25,7 @@ The Qt application is created here in :func:`main`; all window logic lives in th
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from pathlib import Path
@@ -32,6 +33,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import QApplication, QDialog
 
+from core.images import ImageStore
 from core.repository import Repository
 from core.settings import load_settings
 from core.vault import Vault
@@ -41,6 +43,8 @@ from ui.unlock_dialog import UnlockDialog
 
 if TYPE_CHECKING:
     from core.settings import Settings
+
+_log = logging.getLogger(__name__)
 
 # Environment override for the vault location, used by tests and power users. It
 # takes precedence over the location configured in Settings (see resolve_vault_path).
@@ -133,16 +137,34 @@ def _open_vault(vault_path: str | os.PathLike[str]) -> Vault | None:
 
 
 def _bind_vault(window: MainWindow, vault: Vault) -> Repository:
-    """Bind a fresh repository over ``vault`` to ``window`` and populate the panes.
+    """Bind a fresh repository and image store over ``vault`` and populate the panes.
 
-    Builds a :class:`~core.repository.Repository` on the vault's keyed connection,
-    attaches debounced auto-save (which also populates the notebook tree), and
-    refreshes the note list. Used at launch and again after a re-unlock.
+    Builds a :class:`~core.repository.Repository` and an
+    :class:`~core.images.ImageStore` on the vault's keyed connection, sweeps
+    unreferenced images, attaches debounced auto-save (which also populates the
+    notebook tree), binds images, and refreshes the note list. Used at launch and
+    again after a re-unlock.
     """
     repository = Repository(vault.connection)
+    images = ImageStore(vault.connection)
+    # The sweep must run here, before any tab can open, and nowhere else. At
+    # launch there are no tabs; on re-unlock lock_session has already flushed and
+    # closed them all. So every reference to an image is on disk and no undo
+    # stack can bring back text naming a swept one. Mid-session, a sweep could
+    # delete a just-pasted image whose note hasn't auto-saved yet.
+    _sweep_orphan_images(images)
     window.bind_autosave(repository)
+    window.bind_images(images)
     window.refresh_notes()
     return repository
+
+
+def _sweep_orphan_images(images: ImageStore) -> None:
+    """Reclaim images no note mentions; a failure is logged, never raised."""
+    try:
+        images.sweep_orphans()
+    except Exception:  # an unlock must never fail over housekeeping
+        _log.exception("image sweep failed; unreferenced images kept")
 
 
 def _arm_idle_lock(
