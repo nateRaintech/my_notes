@@ -21,7 +21,7 @@ from __future__ import annotations
 import base64
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from PySide6.QtCore import QByteArray, QEvent, QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QGuiApplication, QImageReader, QKeySequence, QShortcut
@@ -582,7 +582,7 @@ class MainWindow(QMainWindow):
         """**Note → Export to PDF…**: a Letter-size PDF."""
         return self._export_note(".pdf", "PDF files (*.pdf)", write_pdf)
 
-    def _export_note(self, extension: str, file_filter: str, writer) -> bool:
+    def _export_note(self, extension: str, file_filter: str, writer: Callable[..., None]) -> bool:
         tab = self.tabbed_editor.active_tab
         if tab is None:
             return False
@@ -591,9 +591,23 @@ class MainWindow(QMainWindow):
         path = self._choose_export_path(safe_filename(title) + extension, file_filter)
         if not path:
             return False
+        # The dialog ran a nested event loop, so the idle-lock timer may have
+        # fired while it was open. Writing now would put decrypted text on disk
+        # after the vault locked — and read a torn-down image store besides.
+        if self.tabbed_editor.active_tab is not tab or self.repository is None:
+            self.statusBar().showMessage("The vault locked — export cancelled", _STATUS_MS)
+            return False
         try:
             writer(markdown, self.image_store, path, title=title)
         except OSError as error:
+            # strerror, not str(error): the latter carries the full path.
+            self.statusBar().showMessage(
+                f"Couldn't export: {error.strerror or error}", _STATUS_MS
+            )
+            return False
+        except Exception as error:
+            # An unexpected failure is a status message, not a traceback out of
+            # a Qt slot — which in the packaged exe is a crash with no message.
             self.statusBar().showMessage(f"Couldn't export: {error}", _STATUS_MS)
             return False
         self.statusBar().showMessage(f"Exported {Path(path).name}", _STATUS_MS)
