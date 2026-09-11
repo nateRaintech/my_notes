@@ -70,6 +70,7 @@ One dated bullet per lesson, newest at the top of its section. Keep each to a se
 
 ## Gotchas
 
+- 2026-09-11 — **The `offscreen` Qt platform on Windows has no fonts** (`QFontDatabase.families()` is empty), so a PDF printed there has no text at all — and no fonts embedded. It is not an export bug; the real Windows platform embeds Segoe UI and the text extracts cleanly. Tests asserting PDF text must skip when no fonts are available (`tests/test_note_export.py`). (#105)
 - 2026-09-11 — **A `QTextDocument.loadResource` override bypasses Qt's resource cache**, and Qt calls it ~6× per render (each layout and paint pass). Anything expensive in it (decoding an image) needs its own cache, or a document that re-renders per keystroke stalls. See `ui/vault_document.py`. (#101)
 - 2026-09-11 — **Python string indices are not `QTextDocument` positions.** Qt counts UTF-16 code units, so one emoji shifts every later position by one. Convert with `ui.preview_images.utf16_offset` before placing a `QTextCursor` from a Python-side regex match. (#101)
 - 2026-09-11 — **Office apps put text *and* a picture of it on the clipboard.** An image-paste handler that prefers `hasImage()` turns every pasted Excel range into a screenshot; let `hasText()` win (`ui.image_ingest.wants_image_paste`). (#101)
