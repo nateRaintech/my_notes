@@ -48,6 +48,9 @@ Each part gets its own spec, plan and build.
 Pure Python. Turns a note title into a default export filename stem. It replaces
 `< > : " / \ | ? *` and control characters with `_`, trims trailing dots and spaces
 (Windows rejects them), and caps the length at 100 characters. It falls back to `note`.
+A stem Windows reserves for a device — `CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`,
+`LPT1`–`LPT9`, case-insensitive and still reserved with an extension — gets a
+trailing `_`, because Windows cannot create a file with that name at all.
 
 ### `ui/note_render.py` — the shared renderer
 
@@ -66,7 +69,9 @@ Pure Python. Turns a note title into a default export filename stem. It replaces
   - A missing image gets `src=""`, so the browser shows the alt text.
   - `image_src` is a parameter so part 6 (Outlook) can pass `cid:` references for embedded email attachments.
 - `write_html(markdown, store, path, *, title)`: writes UTF-8 and raises `OSError` on failure.
-- `write_pdf(markdown, store, path, *, title)`: renders at ratio 2.0, then sets up a `QPdfWriter` with Letter pages, 0.75" margins, resolution 96, title and creator set. It calls `print_`, then releases the writer so the file is flushed. If the file is missing or empty afterwards, it raises `OSError`.
+- `write_pdf(markdown, store, path, *, title)`: renders at ratio 2.0, then sets up a `QPdfWriter` with Letter pages, 0.75" margins, resolution 96, title and creator set. It calls `print_`, then releases the writer so the file is flushed.
+  - **The export owns the file handle.** It opens a `QFile` for writing first and raises `OSError` if that open fails; only then does it construct `QPdfWriter(handle)`. `QPdfWriter(str)` fails *silently* when the target can't be written — the routine case on Windows being a re-export over a PDF that is open in a viewer — and goes on to draw nothing, so the user is told the export worked and keeps the stale file. `QPdfWriter` has **no `isValid()`**; owning the handle is the only way to find out. Checking the file is missing or empty afterwards stays, as a secondary guard, but it cannot catch this case on its own: the pre-existing file is non-empty.
+  - **Parts 2 and 6 must use this same pattern** for any file they write through a Qt writer.
 
 ### `ui/main_window.py` — the Note menu
 
@@ -74,6 +79,8 @@ Pure Python. Turns a note title into a default export filename stem. It replaces
 - `_update_note_actions()` enables them iff `tabbed_editor.active_tab is not None`. It is called at startup and from `_on_active_tab_changed`. The lock path clears all tabs, which emits `active_tab_changed`, so a lock disables the menu with no extra code.
 - `copy_note_text()` puts `plain_text(render_document(...))` on the clipboard, then shows "Copied N characters" in the status bar.
 - `export_note_html()` / `export_note_pdf()` offer a default name of `safe_filename(derive_title(markdown)) + ext` through a new seam `_choose_export_path(default_name, file_filter) -> str`. They write the file and report "Exported <name>" or the error in the status bar.
+- **An export re-checks liveness after the dialog returns.** The file dialog runs a *nested event loop*, so the idle-lock timer keeps ticking inside it and the vault can lock while the user is picking a name. The note's Markdown is captured before the dialog but written after it, so without a re-check the export writes decrypted text to disk after the lock, reports success, and overwrites the "Vault locked" status message. After the dialog, `_export_note` therefore confirms the same tab is still active and `repository` is still set, and otherwise cancels with "The vault locked — export cancelled". The fix is *not* to capture `image_store` before the dialog: that would write the note's images out after a lock too, making the guarantee worse.
+- **Export errors are reported, never raised.** `OSError` is reported with `error.strerror`, not `str(error)`, which carries the full filesystem path (as `save_preview_image` already does); any other exception becomes "Couldn't export: <error>", because a traceback out of a Qt slot is a silent crash in the packaged exe.
 
 ### Dependencies
 
@@ -94,7 +101,7 @@ No new runtime dependency. `pypdf` is added to `requirements.txt` and to the CI 
   - the table and `<title>` are present
   - a missing id gets `src=""`
   - a custom `image_src` is honoured
-- **`write_pdf`:** `pypdf` reads one page with one image and the title metadata. When fonts are available, the normalised text contains the note's words; otherwise the text check is skipped. A write to an impossible path raises `OSError`.
+- **`write_pdf`:** `pypdf` reads one page with one image and the title metadata. When fonts are available, the normalised text contains the note's words; otherwise the text check is skipped. A write to an impossible path raises `OSError`, and so does a write over a **read-only existing file**, which must leave the original bytes untouched. A long note spans more than one page — pagination, and with it the page-number footer, is otherwise never exercised.
 - **Window:**
   - The Note menu comes after View, and is disabled with no tab, enabled after a note opens, and disabled again after a lock.
   - Copy Text puts the expected text on the clipboard.
@@ -107,3 +114,5 @@ No new runtime dependency. `pypdf` is added to `requirements.txt` and to the CI 
 - DOCX and Outlook (parts 2 and 6), and tables and graphs as insert types (parts 3 and 4). They inherit this rendering path.
 - Custom PDF styling (fonts, headers, themes). The export uses the document's default look.
 - Exporting several notes or a whole notebook at once.
+- **Copy Text loses checkbox state:** `- [x] done` copies as `- done`, because the marker lives in Qt's list formatting rather than the block text. The HTML and PDF exports keep it, via Qt's CSS marker. Tracked as a follow-up issue.
+- **The clipboard is not cleared on lock.** Text copied with Copy Text outlives the lock, consistent with the decision taken for images in #101.
