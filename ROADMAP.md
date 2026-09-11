@@ -32,6 +32,16 @@ See `CLAUDE.md` for the full design and architecture (strict `core/` logic vs `u
 
 ## Milestones
 
+### M10: Screenshots & Images in Notes — `status: in progress`
+
+Paste a screenshot from the clipboard into a note and resize it in place. Images are
+stored inside the encrypted vault, never on disk in the clear; resizing changes only the
+display width recorded in the Markdown, so it is always reversible. Design:
+`docs/superpowers/specs/2026-09-11-screenshot-images-design.md`.
+
+- [ ] Paste, drop, or insert an image into a note; it renders sharply in the preview and can be copied or saved back out; images no note uses are reclaimed on unlock (#101)
+- [ ] Resize an image by dragging corner handles in the preview, with undo (#102)
+
 ### M9: Text Tools Suite & Dark Theme Completion — `status: done` (completed 2026-08-21)
 
 Two requests from daily use of the shipped v1.0. A Notepad++-style suite of text and data
