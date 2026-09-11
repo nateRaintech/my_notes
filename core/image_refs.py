@@ -140,14 +140,16 @@ def resolve_ref(
 
     The preview identifies an image by its position among rendered images. That
     normally equals its index in :func:`find_refs`, but the two parsers can
-    disagree on edge cases, so the index is trusted only if the ids match.
-    Otherwise the one ref with the same id *and* width is used, and if that is
-    ambiguous nothing is returned: editing the wrong image is worse than
-    declining.
+    disagree on edge cases, so the index is trusted only if both the id and the
+    width match. Otherwise the one ref with the same id *and* width is used, and
+    if that is ambiguous nothing is returned: editing the wrong image is worse
+    than declining.
     """
     refs = find_refs(markdown)
-    if 0 <= ordinal < len(refs) and refs[ordinal].image_id == image_id:
-        return refs[ordinal]
+    if 0 <= ordinal < len(refs):
+        at_ordinal = refs[ordinal]
+        if at_ordinal.image_id == image_id and at_ordinal.width == width:
+            return at_ordinal
     candidates = [r for r in refs if r.image_id == image_id and r.width == width]
     return candidates[0] if len(candidates) == 1 else None
 

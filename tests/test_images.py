@@ -89,6 +89,14 @@ def test_sweep_removes_only_images_no_note_mentions(conn, store):
     assert store.get(in_code.id) is not None  # liberal: a mention in code keeps it
 
 
+def test_a_swept_id_is_never_reused(store):
+    # A stale mnimg:<id> must show "missing image", not someone else's screenshot.
+    swept = store.add(b"swept", "image/png", 1, 1)
+    store.sweep_orphans()
+    assert store.get(swept.id) is None
+    assert store.add(b"different", "image/png", 1, 1).id != swept.id
+
+
 def test_sweep_with_nothing_to_do(store):
     assert store.sweep_orphans() == SweepResult(count=0, freed_bytes=0)
 

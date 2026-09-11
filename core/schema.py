@@ -127,9 +127,12 @@ CREATE TABLE IF NOT EXISTS app_secrets (
 #           its body (core.image_refs), and images no body mentions are removed
 #           by core.images.ImageStore.sweep_orphans. width/height cache the
 #           natural pixel size so it never has to be decoded just to be known.
+#           AUTOINCREMENT so an id is never reused after a sweep: a stale
+#           `mnimg:<id>` must render "missing image", not an unrelated image
+#           that happened to get the freed rowid.
 _MIGRATION_3 = """
 CREATE TABLE IF NOT EXISTS images (
-    id         INTEGER PRIMARY KEY,
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
     sha256     TEXT    NOT NULL UNIQUE,
     mime       TEXT    NOT NULL,
     width      INTEGER NOT NULL,

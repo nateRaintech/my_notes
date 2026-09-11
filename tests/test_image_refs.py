@@ -106,6 +106,13 @@ def test_resolve_ref_falls_back_to_the_unique_id_and_width_match():
     assert resolve_ref(md, 0, 2, 50) == find_refs(md)[1]
 
 
+def test_resolve_ref_checks_the_width_at_the_ordinal_too():
+    md = "![a](mnimg:1?w=100) ![b](mnimg:1?w=50)"
+    # The ordinal lands on the right id but the wrong width; the one ref with
+    # id 1 at width 50 is the image that was clicked.
+    assert resolve_ref(md, 0, 1, 50) == find_refs(md)[1]
+
+
 def test_resolve_ref_declines_when_ambiguous():
     md = "![a](mnimg:1?w=100) ![b](mnimg:1?w=100)"
     assert resolve_ref(md, 5, 1, 100) is None
