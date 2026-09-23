@@ -6,6 +6,7 @@ import sys
 import pytest
 
 from core.crypto import KdfParams
+from core.hidden_text import HiddenTextStore
 from core.images import ImageStore
 from core.repository import Repository
 from core.vault import Vault
@@ -132,3 +133,27 @@ def test_relock_rebinds_images(qapp, tmp_path):
         assert window.image_store is not None
     finally:
         reopened.lock()
+
+
+def test_bind_vault_sweeps_and_binds_hidden_text(qapp, vault):
+    hidden = HiddenTextStore(vault.connection)
+    kept = hidden.add("kept")
+    orphan = hidden.add("orphan")
+    Repository(vault.connection).create_note(title="n", body=f"pw ![hidden](mnsec:{kept})")
+
+    window = MainWindow()
+    app_module._bind_vault(window, vault)
+
+    assert hidden.get(orphan) is None
+    assert hidden.get(kept) == "kept"
+    assert window.hidden_store is not None
+
+
+def test_a_failed_image_sweep_still_sweeps_hidden_text(qapp, vault, monkeypatch):
+    def explode(self):
+        raise RuntimeError("disk on fire")
+
+    monkeypatch.setattr(ImageStore, "sweep_orphans", explode)
+    orphan = HiddenTextStore(vault.connection).add("orphan")
+    app_module._bind_vault(MainWindow(), vault)
+    assert HiddenTextStore(vault.connection).get(orphan) is None

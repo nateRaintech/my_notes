@@ -46,12 +46,14 @@ from PySide6.QtWidgets import (
 )
 
 from core.autosave import DEFAULT_DEBOUNCE_SECONDS
+from core.hidden_text import hidden_markdown
 from core.image_refs import resolve_ref
 from core.images import extension_for
 from core.notebooks import build_notebook_tree, would_create_cycle
 from core.settings import DEFAULT_SETTINGS, save_settings
 from core.text import count_words, derive_title, safe_filename
 from core.theme import DEFAULT_THEME, load_stylesheet
+from ui.hidden_text import ClipboardGuard, PreviewClickFilter, PreviewHidden, hidden_at
 from ui.icons import cross_icon, float_icon, glyph_color
 from ui.image_ingest import IngestError, ingest_file
 from ui.import_wizard import ImportWizard
@@ -70,6 +72,7 @@ from ui.vault_document import VaultTextDocument
 if TYPE_CHECKING:
     import os
 
+    from core.hidden_text import HiddenTextStore
     from core.images import ImageStore
     from core.repository import Note, Notebook, Repository
     from core.settings import Settings
@@ -216,6 +219,12 @@ class MainWindow(QMainWindow):
         self.preview.setDocument(self.preview_document)
         self.preview.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.preview.customContextMenuRequested.connect(self._show_preview_context_menu)
+        # Hidden text (#113): the preview shows each value as a pill; clicking
+        # one copies it, and the guard takes it off the clipboard again.
+        self.hidden_store: HiddenTextStore | None = None
+        self.clipboard_guard = ClipboardGuard(self)
+        self._preview_clicks = PreviewClickFilter(self.preview)
+        self._preview_clicks.clicked.connect(self.copy_hidden)
 
         # --- Dock widgets ----------------------------------------------------
 
@@ -482,6 +491,16 @@ class MainWindow(QMainWindow):
         inspect the menu without a modal loop.
         """
         menu = self.preview.createStandardContextMenu()
+        hidden = hidden_at(self.preview, pos)
+        if hidden is not None:
+            copy_hidden = QAction("Copy hidden text", menu)
+            copy_hidden.triggered.connect(lambda: self.copy_hidden(hidden))
+            edit_hidden = QAction("Edit hidden text…", menu)
+            edit_hidden.triggered.connect(lambda: self.edit_hidden(hidden))
+            first = menu.actions()[0] if menu.actions() else None
+            menu.insertActions(first, [copy_hidden, edit_hidden])
+            menu.insertSeparator(first)
+            return menu
         image = image_at(self.preview, pos)
         if image is None:
             return menu
@@ -547,6 +566,98 @@ class MainWindow(QMainWindow):
             return False
         apply_image_width(tab.source, ref, None)
         return True
+
+    # -------------------------------------------------------------------------
+    # Hidden text (#113)
+    # -------------------------------------------------------------------------
+
+    def bind_hidden_text(self, store: HiddenTextStore | None) -> None:
+        """Bind (or with ``None``, detach) where hidden values are kept."""
+        self.hidden_store = store
+
+    def _hideable_selection(self, source) -> str | None:
+        """The selected text in ``source`` if it can be hidden, else ``None``."""
+        if self.hidden_store is None:
+            return None
+        # selectedText() uses U+2029 for line breaks.
+        text = source.textCursor().selectedText().replace("\u2029", "\n")
+        return text if text.strip() else None
+
+    def hide_selection(self, source=None) -> bool:
+        """Move the selection into the vault, leaving a masked reference.
+
+        One undoable edit. The value is stored before the note changes, so a
+        failure leaves the note as it was.
+        """
+        if source is None:
+            tab = self.tabbed_editor.active_tab
+            if tab is None:
+                return False
+            source = tab.source
+        text = self._hideable_selection(source)
+        if text is None:
+            return False
+        try:
+            hidden_id = self.hidden_store.add(text)
+        except Exception as error:  # never let a store failure escape a Qt slot
+            self.statusBar().showMessage(f"Couldn't hide the text: {error}", _STATUS_MS)
+            return False
+        cursor = source.textCursor()
+        cursor.beginEditBlock()
+        cursor.insertText(hidden_markdown(hidden_id))
+        cursor.endEditBlock()
+        self.statusBar().showMessage("Text hidden — click it in the preview to copy", _STATUS_MS)
+        return True
+
+    def copy_hidden(self, item: PreviewHidden) -> bool:
+        """Copy ``item``'s value to the clipboard, to be cleared after the timeout."""
+        value = self._hidden_value(item)
+        if value is None:
+            self.statusBar().showMessage("That hidden text no longer exists", _STATUS_MS)
+            return False
+        seconds = self.settings.clipboard_clear_seconds
+        self.clipboard_guard.copy(value, clear_after_seconds=seconds)
+        message = "Hidden text copied"
+        if seconds > 0:
+            message += f" — clipboard clears in {seconds} s"
+        self.statusBar().showMessage(message, _STATUS_MS)
+        return True
+
+    def edit_hidden(self, item: PreviewHidden) -> bool:
+        """Replace ``item``'s value with one typed into a masked field."""
+        if self._hidden_value(item) is None:
+            self.statusBar().showMessage("That hidden text no longer exists", _STATUS_MS)
+            return False
+        value = self._prompt_hidden_value()
+        if value is None or not value.strip():
+            return False
+        # The dialog ran a nested event loop: the vault may have locked meanwhile.
+        if self.hidden_store is None:
+            self.statusBar().showMessage("The vault locked — edit cancelled", _STATUS_MS)
+            return False
+        try:
+            changed = self.hidden_store.update(item.hidden_id, value)
+        except Exception as error:
+            self.statusBar().showMessage(f"Couldn't save the hidden text: {error}", _STATUS_MS)
+            return False
+        if changed:
+            self.statusBar().showMessage("Hidden text updated", _STATUS_MS)
+        return changed
+
+    def _hidden_value(self, item: PreviewHidden) -> str | None:
+        if self.hidden_store is None:
+            return None
+        try:
+            return self.hidden_store.get(item.hidden_id)
+        except Exception:
+            return None
+
+    def _prompt_hidden_value(self) -> str | None:
+        """The masked input dialog — the seam tests replace to avoid a modal loop."""
+        value, ok = QInputDialog.getText(
+            self, "Edit hidden text", "New value:", QLineEdit.EchoMode.Password
+        )
+        return value if ok else None
 
     # -------------------------------------------------------------------------
     # Note menu (#105)
@@ -828,6 +939,9 @@ class MainWindow(QMainWindow):
         self.image_store = None
         self.tabbed_editor.set_image_store(None)
         self.preview_document.set_store(None)
+        # A copied hidden value must not outlive the session on the clipboard.
+        self.hidden_store = None
+        self.clipboard_guard.clear_now()
         # Flush every tab's pending edit, then wipe all tabs (encrypted-vault
         # requirement: no decrypted note text lingers after lock). clear_all
         # flushes each tab before removing it.
@@ -979,6 +1093,10 @@ class MainWindow(QMainWindow):
         """
         menu = source.createStandardContextMenu()
         menu.addSeparator()
+        hide = QAction("Hide text", menu)
+        hide.setEnabled(self._hideable_selection(source) is not None)
+        hide.triggered.connect(lambda: self.hide_selection(source))
+        menu.addAction(hide)
         menu.addMenu(
             build_context_menu_extras(
                 menu, self.run_tool, palette=self.open_tool_palette
