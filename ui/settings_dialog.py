@@ -32,6 +32,7 @@ Qt-free settings/theme modules; ``core/`` never imports this module.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import (
@@ -66,6 +67,8 @@ _MIN_IDLE_MINUTES = 1
 _MAX_IDLE_MINUTES = 24 * 60
 # Minutes shown when enabling auto-lock on a vault that had it disabled.
 _DEFAULT_IDLE_MINUTES = 5
+# Upper bound for the hidden-text clipboard timeout: ten minutes.
+_MAX_CLIPBOARD_SECONDS = 600
 
 
 def _seconds_to_minutes(seconds: int | None) -> int:
@@ -156,6 +159,14 @@ class SettingsDialog(QDialog):
         self.lock_on_minimize_checkbox.setChecked(settings.lock_on_minimize)
         form.addRow("", self.lock_on_minimize_checkbox)
 
+        # How long copied hidden text stays on the clipboard (#113); 0 = never.
+        self.clipboard_clear_seconds = QSpinBox()
+        self.clipboard_clear_seconds.setRange(0, _MAX_CLIPBOARD_SECONDS)
+        self.clipboard_clear_seconds.setSuffix(" s")
+        self.clipboard_clear_seconds.setSpecialValueText("Never")
+        self.clipboard_clear_seconds.setValue(settings.clipboard_clear_seconds)
+        form.addRow("Clear copied hidden text after:", self.clipboard_clear_seconds)
+
         layout = QVBoxLayout(self)
         layout.addLayout(form)
 
@@ -190,11 +201,15 @@ class SettingsDialog(QDialog):
             )
         else:
             idle_timeout_seconds = None
-        self.settings = Settings(
+        # replace() keeps the fields the dialog doesn't edit (the saved window
+        # layout) instead of resetting them to defaults.
+        self.settings = replace(
+            self._initial,
             idle_timeout_seconds=idle_timeout_seconds,
             vault_path=vault_path,
             lock_on_minimize=self.lock_on_minimize_checkbox.isChecked(),
             theme=self.theme_combo.currentText(),
+            clipboard_clear_seconds=self.clipboard_clear_seconds.value(),
         )
         save_settings(self.settings, self._settings_path)
         self.accept()

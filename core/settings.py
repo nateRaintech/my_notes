@@ -56,6 +56,8 @@ class Settings:
     window_state: str | None = None
     # QMainWindow.saveGeometry() encoded as a base64 string; None = use defaults.
     window_geometry: str | None = None
+    # Seconds before copied hidden text is cleared from the clipboard; 0 = never.
+    clipboard_clear_seconds: int = 30
 
 
 DEFAULT_SETTINGS = Settings()
@@ -96,6 +98,13 @@ def _coerce_theme(value: object) -> str:
     return value if isinstance(value, str) and value in available_themes() else DEFAULT_THEME
 
 
+def _coerce_clipboard_clear(value: object) -> int:
+    """A non-negative ``int`` of seconds (0 = never clear), else the default."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return DEFAULT_SETTINGS.clipboard_clear_seconds
+    return value
+
+
 def _coerce_b64(value: object) -> str | None:
     """An opaque base64 string, or None if missing/invalid.
 
@@ -119,6 +128,7 @@ def _from_mapping(data: dict[str, object]) -> Settings:
         theme=_coerce_theme(data.get("theme")),
         window_state=_coerce_b64(data.get("window_state")),
         window_geometry=_coerce_b64(data.get("window_geometry")),
+        clipboard_clear_seconds=_coerce_clipboard_clear(data.get("clipboard_clear_seconds")),
     )
 
 

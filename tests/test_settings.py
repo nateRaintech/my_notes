@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from core import settings
 from core.theme import DEFAULT_THEME
 
@@ -177,3 +179,17 @@ def test_save_and_load_use_default_path_when_none(monkeypatch, tmp_path):
     settings.save_settings(original)
     assert target.exists()
     assert settings.load_settings() == original
+
+
+def test_clipboard_clear_defaults_to_thirty_seconds():
+    assert settings.DEFAULT_SETTINGS.clipboard_clear_seconds == 30
+
+
+@pytest.mark.parametrize(
+    ("stored", "expected"),
+    [(0, 0), (90, 90), (-5, 30), ("ten", 30), (True, 30), (None, 30)],
+)
+def test_clipboard_clear_seconds_is_validated(tmp_path, stored, expected):
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"clipboard_clear_seconds": stored}), encoding="utf-8")
+    assert settings.load_settings(path).clipboard_clear_seconds == expected

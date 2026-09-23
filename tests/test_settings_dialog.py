@@ -267,3 +267,21 @@ def test_resolve_vault_path_defaults_when_neither(monkeypatch):
     path = app.resolve_vault_path(Settings(vault_path=None))
     assert path.name == "notes.vault"
     assert path.parent.name == ".my_notes"
+
+
+def test_dialog_shows_clipboard_clear_seconds(qapp, settings_file):
+    dialog = SettingsDialog(Settings(clipboard_clear_seconds=45), settings_path=settings_file)
+    assert dialog.clipboard_clear_seconds.value() == 45
+
+
+def test_apply_writes_clipboard_clear_seconds(qapp, settings_file):
+    dialog = SettingsDialog(Settings(), settings_path=settings_file)
+    dialog.clipboard_clear_seconds.setValue(0)
+    assert dialog.apply().clipboard_clear_seconds == 0
+    assert load_settings(settings_file).clipboard_clear_seconds == 0
+
+
+def test_apply_keeps_the_saved_window_layout(qapp, settings_file):
+    seeded = Settings(window_state="c3RhdGU=", window_geometry="Z2VvbQ==")
+    result = SettingsDialog(seeded, settings_path=settings_file).apply()
+    assert (result.window_state, result.window_geometry) == ("c3RhdGU=", "Z2VvbQ==")
