@@ -43,9 +43,13 @@ class PreviewImage:
     url: str
 
 
-def rendered_images(document: QTextDocument) -> list[PreviewImage]:
-    """Every ``mnimg:`` image in ``document``, in order."""
-    images: list[PreviewImage] = []
+def image_positions(document: QTextDocument) -> list[tuple[str, int]]:
+    """``(url, position)`` for every image character in ``document``, in order.
+
+    Every scheme is included; callers filter by URL. Shared by the ``mnimg:``
+    images here and the ``mnsec:`` hidden text in :mod:`ui.hidden_text`.
+    """
+    found: list[tuple[str, int]] = []
     block = document.begin()
     while block.isValid():
         it = block.begin()
@@ -53,32 +57,45 @@ def rendered_images(document: QTextDocument) -> list[PreviewImage]:
             fragment = it.fragment()
             if fragment.isValid() and fragment.charFormat().isImageFormat():
                 url = fragment.charFormat().toImageFormat().name()
-                parsed = parse_url(url)
-                if parsed is not None:
-                    # Identical adjacent images share one fragment; each
-                    # character in it is a separate image.
-                    for offset in range(fragment.length()):
-                        images.append(
-                            PreviewImage(
-                                image_id=parsed[0],
-                                width=parsed[1],
-                                ordinal=len(images),
-                                position=fragment.position() + offset,
-                                url=url,
-                            )
-                        )
+                # Identical adjacent images share one fragment; each character
+                # in it is a separate image.
+                for offset in range(fragment.length()):
+                    found.append((url, fragment.position() + offset))
             it += 1
         block = block.next()
+    return found
+
+
+def rendered_images(document: QTextDocument) -> list[PreviewImage]:
+    """Every ``mnimg:`` image in ``document``, in order."""
+    images: list[PreviewImage] = []
+    for url, position in image_positions(document):
+        parsed = parse_url(url)
+        if parsed is not None:
+            images.append(
+                PreviewImage(
+                    image_id=parsed[0],
+                    width=parsed[1],
+                    ordinal=len(images),
+                    position=position,
+                    url=url,
+                )
+            )
     return images
 
 
 def image_rect(view: QTextEdit, image: PreviewImage) -> QRect:
     """Where ``image`` is drawn in ``view``'s viewport (empty if unknown)."""
+    return rendered_rect(view, image.position, image.url)
+
+
+def rendered_rect(view: QTextEdit, position: int, url: str) -> QRect:
+    """Where the image at document ``position`` with ``url`` is drawn in ``view``."""
     cursor = QTextCursor(view.document())
-    cursor.setPosition(image.position)
+    cursor.setPosition(position)
     caret = view.cursorRect(cursor)
     rendered = view.document().resource(
-        QTextDocument.ResourceType.ImageResource, QUrl(image.url)
+        QTextDocument.ResourceType.ImageResource, QUrl(url)
     )
     if not isinstance(rendered, QImage) or rendered.isNull():
         return QRect()
