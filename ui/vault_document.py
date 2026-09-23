@@ -1,6 +1,8 @@
 """The preview's document: renders ``mnimg:`` images from the vault (#101).
 
 ``QTextDocument.setMarkdown`` resolves image URLs through :meth:`loadResource`.
+It also answers hidden-text ``mnsec:`` URLs (#113) with the masked pill from
+:func:`ui.hidden_text.mask_image`, which needs no vault lookup.
 :class:`VaultTextDocument` answers ``mnimg:<id>?w=<px>`` URLs from the vault's
 :class:`~core.images.ImageStore`, scaled to ``w × device pixel ratio`` and tagged
 with that ratio, so Qt lays the image out at ``w`` logical pixels and it stays
@@ -35,7 +37,9 @@ from typing import TYPE_CHECKING, Callable, Hashable
 from PySide6.QtCore import QObject, Qt, QUrl
 from PySide6.QtGui import QColor, QImage, QPainter, QTextDocument
 
+from core import hidden_text
 from core.image_refs import SCHEME, parse_url
+from ui.hidden_text import mask_image
 from ui.image_ingest import natural_logical_width
 
 if TYPE_CHECKING:
@@ -111,6 +115,7 @@ class VaultTextDocument(QTextDocument):
         self._device_pixel_ratio = device_pixel_ratio
         self._cache = ImageCache()
         self._placeholder: QImage | None = None
+        self._masks: dict[float, QImage] = {}
 
     @property
     def cache(self) -> ImageCache:
@@ -153,6 +158,8 @@ class VaultTextDocument(QTextDocument):
 
     def loadResource(self, type_: int, url: QUrl) -> object:
         kind = getattr(type_, "value", type_)
+        if kind == _IMAGE_RESOURCE and url.scheme() == hidden_text.SCHEME:
+            return self._mask()
         if kind != _IMAGE_RESOURCE or url.scheme() != SCHEME:
             return super().loadResource(type_, url)
 
@@ -175,6 +182,13 @@ class VaultTextDocument(QTextDocument):
             return self.placeholder()
         self._cache.put(key, scaled)
         return scaled
+
+    def _mask(self) -> QImage:
+        """The hidden-text pill (#113). Every ``mnsec:`` URL gets the same one."""
+        ratio = self._device_pixel_ratio()
+        if ratio not in self._masks:
+            self._masks[ratio] = mask_image(ratio)
+        return self._masks[ratio]
 
     def _render(self, image_id: int, width: int | None, ratio: float) -> QImage | None:
         """``image_id`` scaled for ``width`` logical px at ``ratio``, or ``None``."""
