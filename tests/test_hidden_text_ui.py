@@ -134,7 +134,7 @@ def test_copy_puts_the_value_on_the_clipboard_excluded_from_history(clipboard):
     for fmt in HISTORY_EXCLUSION_FORMATS:
         assert mime.hasFormat(fmt)
     assert guard.timer.isActive()
-    assert 29_000 <= guard.timer.remainingTime() <= 30_000
+    assert guard.timer.interval() == 30_000
 
 
 def test_history_formats_say_no(clipboard):
