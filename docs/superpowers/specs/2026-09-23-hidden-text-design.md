@@ -64,13 +64,12 @@ one doesn't silently change the other.
 image sweep runs — at unlock, before any tab opens — using the same liberal
 "any mention anywhere" id scan.
 
-## References — `core/hidden_refs.py`
+## References
 
-`hidden_markdown(id, label)`, `parse_url`, `find_refs`, `resolve_ref`
-(ordinal-verified, as for images), `referenced_ids`. The "which image links does
-the preview actually render" scan (skipping fenced code and inline code) is
-factored out of `core/image_refs.py` into a shared `rendered_links(markdown)`
-so both schemes use one scanner.
+Also in `core/hidden_text.py`: `hidden_markdown(id, label)`, `parse_url`, and
+`referenced_ids` (for the sweep). Unlike images, nothing ever edits a hidden
+reference from the preview — copy and edit act on the id in the URL — so there
+is no span-finding or ordinal resolution.
 
 ## UI — `ui/hidden_text.py`
 
