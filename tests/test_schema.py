@@ -177,7 +177,7 @@ def test_migration_3_upgrades_a_v2_vault_and_keeps_its_notes(conn):
     conn.execute("INSERT INTO notes (title, body) VALUES ('kept', 'body')")
     conn.commit()
 
-    assert schema.migrate(conn) == 3
+    assert schema.migrate(conn) >= 3
     assert "images" in _table_names(conn)
     assert conn.execute("SELECT title FROM notes").fetchall() == [("kept",)]
-    assert schema.migrate(conn) == 3  # idempotent
+    assert schema.migrate(conn) == schema.SCHEMA_VERSION  # idempotent

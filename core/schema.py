@@ -2,8 +2,8 @@
 
 The vault's core is five tables — ``notebooks``, ``notes``, ``tags``,
 ``note_tags`` and an ``notes_fts`` full-text index — created automatically the
-first time a vault is opened; later migrations add ``app_secrets`` (2) and
-``images`` (3). The logical schema version is tracked in SQLite's
+first time a vault is opened; later migrations add ``app_secrets`` (2),
+``images`` (3) and ``hidden_texts`` (4). The logical schema version is tracked in SQLite's
 ``PRAGMA user_version``; :func:`migrate` brings a connection up to
 :data:`SCHEMA_VERSION` by applying each pending migration in order. It is
 **forward-only** and **idempotent**: a database already at the latest version is
@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 
 # Bump this when appending a migration below. Always equals the highest
 # migration version, i.e. the schema a freshly created vault ends up at.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # Migration 1 — the initial schema.
 #   notebooks  nest via a self-referential parent_id (deleting a notebook removes
@@ -143,6 +143,22 @@ CREATE TABLE IF NOT EXISTS images (
 );
 """
 
+# Migration 4 — hidden text (#113).
+#   hidden_texts  values the user hid from a note; the note keeps only an
+#                 `mnsec:<id>` reference (core.hidden_text), so the plaintext is
+#                 out of notes.body and notes_fts. Like images, no note_id: rows
+#                 no body mentions are removed by HiddenTextStore.sweep_orphans.
+#                 AUTOINCREMENT so a stale reference can never copy an unrelated
+#                 value that inherited a freed rowid.
+_MIGRATION_4 = """
+CREATE TABLE IF NOT EXISTS hidden_texts (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    value      TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"""
+
 # Forward-only, ordered (version, DDL) migrations. Append new ones and bump
 # SCHEMA_VERSION; never edit or reorder a shipped migration — vaults in the field
 # have already applied it, and migrations only ever run *forward* from the
@@ -151,6 +167,7 @@ _MIGRATIONS: tuple[tuple[int, str], ...] = (
     (1, _MIGRATION_1),
     (2, _MIGRATION_2),
     (3, _MIGRATION_3),
+    (4, _MIGRATION_4),
 )
 
 
