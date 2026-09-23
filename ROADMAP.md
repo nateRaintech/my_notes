@@ -32,6 +32,14 @@ See `CLAUDE.md` for the full design and architecture (strict `core/` logic vs `u
 
 ## Milestones
 
+### M12: Hidden Text for Credentials — `status: done` (completed 2026-09-23)
+
+Make a note safe to show on screen. Selected text can be hidden: it moves into the
+vault, the note keeps a reference, and the preview shows a masked pill that copies on
+click. Design: `docs/superpowers/specs/2026-09-23-hidden-text-design.md`.
+
+- [x] Hide selected text as a masked, copy-only value; the clipboard clears itself _(done: `hidden_texts` table (schema v4) + `core/hidden_text.py`; `ui/hidden_text.py` mask, click filter and `ClipboardGuard`; Hide text / Copy / Edit in `ui/main_window.py`; sweep in `app._bind_vault`; clipboard timeout in Settings.)_ (#113)
+
 ### M11: Note Menu, Exports & Rich Inserts — `status: in progress`
 
 Act on the current note as a whole, and put richer content into it. A Note menu (disabled

@@ -23,6 +23,9 @@ no code is carried over.
   that jumps to any note by fuzzy title match.
 - **Notebooks** for organization — create, rename, delete, nest, and move notes between
   them.
+- **Hidden text for credentials** — select a password in a note, right-click →
+  *Hide text*, and it shows as a masked pill you can click to copy. The value is kept
+  out of the note entirely, and copies clear themselves from the clipboard.
 - **Import** your old notes from a legacy `notes.db` via a guided wizard.
 - **Auto-lock** — the vault locks and re-prompts for the master password after a
   configurable idle timeout, and optionally when the window is minimized.
@@ -115,6 +118,21 @@ after you stop typing — there's no Save button. The status bar shows a live wo
 > You can also bring in existing notes in bulk with the legacy-`notes.db`
 > **import wizard** (below). Selecting any note in the list opens it in the editor.
 
+**Hide credentials.** Select text in the editor, right-click, and choose *Hide text*.
+The selection moves into the vault and the note keeps only a reference
+(`![hidden](mnsec:7)`); the preview shows it as eight dots and a copy icon. Nothing
+on screen ever shows the value again, which makes the note safe to open in front of
+someone — the dot count doesn't even reveal the length. Hidden text isn't searchable,
+and exports and *Copy Text* show the mask.
+
+- **Click the pill** (or right-click → *Copy hidden text*) to copy the value. The
+  clipboard is cleared after 30 seconds if it still holds it (change or turn this off
+  in Settings), and whenever the vault locks. The copy is kept out of Windows
+  clipboard history and cloud clipboard sync.
+- **Right-click → *Edit hidden text…*** replaces the value through a masked field.
+- `Ctrl+Z` right after hiding brings the text back; a hidden value no note refers to
+  any more is removed the next time the vault is unlocked.
+
 **Organize with notebooks.** Right-click in the left pane to create, rename, delete, or
 nest notebooks, and to *Move to…* a notebook under another. Right-click a note in the
 list to *Move to notebook…*. Selecting a notebook filters the note list to that
@@ -132,7 +150,7 @@ read-only and never modified.
 
 **Settings.** File → *Settings…* lets you change the **theme**, the **vault file
 location**, the **idle-lock timeout**, and whether to **lock when the window is
-minimized**. Settings persist to disk (see below) and apply on the next launch (theme
+minimized**, and how long copied **hidden text** stays on the clipboard. Settings persist to disk (see below) and apply on the next launch (theme
 applies immediately).
 
 **Dark theme.** View → *Dark Theme* toggles a dark Qt stylesheet. The choice is
@@ -261,6 +279,8 @@ my_notes/
 │   ├── theme.py        # QSS theme loader (Qt-free)
 │   ├── autosave.py     # debounce/persist policy for auto-save
 │   ├── text.py         # title derivation + word count
+│   ├── images.py       # images stored in the vault (+ image_refs.py)
+│   ├── hidden_text.py  # hidden values kept out of note bodies
 │   └── tools/          # the text/data tool suite — pure str -> str transforms
 │       ├── base.py     #   the Tool value object + ToolError
 │       ├── registry.py #   ALL_TOOLS: the one list every UI surface is built from
@@ -280,6 +300,7 @@ my_notes/
 │   ├── tool_palette.py    # Ctrl+Shift+T fuzzy tool search
 │   ├── tool_runner.py     # selection -> tool -> undoable replace
 │   ├── icons.py           # theme-coloured icons painted at runtime
+│   ├── hidden_text.py     # the hidden-text mask, click-to-copy, clipboard guard
 │   ├── autosave.py        # QTimer-driven auto-save controller
 │   └── idle_lock.py       # idle/activity-driven auto-lock controller
 ├── resources/    # QSS theme (dark.qss)

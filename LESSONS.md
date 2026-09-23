@@ -70,6 +70,9 @@ One dated bullet per lesson, newest at the top of its section. Keep each to a se
 
 ## Gotchas
 
+- 2026-09-23 — **To set a raw Windows clipboard format from Qt, use the MIME type `application/x-qt-windows-mime;value="<FormatName>"`.** Qt registers it under exactly that name — confirmed with `EnumClipboardFormats` on the real platform. That is how `ui.hidden_text.ClipboardGuard` sets `ExcludeClipboardContentFromMonitorProcessing` / `CanIncludeInClipboardHistory` / `CanUploadToCloudClipboard` (DWORD 0) to keep copied secrets out of Win+V history and cloud sync. (#113)
+- 2026-09-23 — **Writing Python source through a heredoc'd script turns `"\u2029"` into a literal invisible character** (and `"\n"` into a real line break inside a string literal — a syntax error). Build such lines with `chr(92)`, or use the Edit tool, then check the bytes with `grep`/`cat -A`. (#113)
+
 - 2026-09-11 — **The `offscreen` Qt platform on Windows has no fonts** (`QFontDatabase.families()` is empty), so a PDF printed there has no text at all — and no fonts embedded. It is not an export bug; the real Windows platform embeds Segoe UI and the text extracts cleanly. Tests asserting PDF text must skip when no fonts are available (`tests/test_note_export.py`). (#105)
 - 2026-09-11 — **A `QTextDocument.loadResource` override bypasses Qt's resource cache**, and Qt calls it ~6× per render (each layout and paint pass). Anything expensive in it (decoding an image) needs its own cache, or a document that re-renders per keystroke stalls. See `ui/vault_document.py`. (#101)
 - 2026-09-11 — **Python string indices are not `QTextDocument` positions.** Qt counts UTF-16 code units, so one emoji shifts every later position by one. Convert with `ui.preview_images.utf16_offset` before placing a `QTextCursor` from a Python-side regex match. (#101)
