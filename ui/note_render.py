@@ -22,6 +22,8 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtGui import QTextBlock, QTextDocument, QTextFrame, QTextListFormat, QTextTable
 
+from core.hidden_text import parse_url as parse_hidden_url
+from ui.hidden_text import MASK_TEXT
 from ui.vault_document import VaultTextDocument
 
 if TYPE_CHECKING:
@@ -91,7 +93,7 @@ def _collect(frame: QTextFrame, lines: list[str]) -> None:
 
 def _block_line(block: QTextBlock) -> str:
     text = (
-        block.text()
+        _visible_text(block)
         .replace(OBJECT_REPLACEMENT, "")
         .replace(_LINE_SEPARATOR, "\n")
         .rstrip()
@@ -103,3 +105,22 @@ def _block_line(block: QTextBlock) -> str:
     marker = "-" if list_format.style() in _BULLETS else text_list.itemText(block)
     indent = "  " * max(0, list_format.indent() - 1)
     return f"{indent}{marker} {text}"
+
+
+def _visible_text(block: QTextBlock) -> str:
+    """``block``'s text with each hidden-text pill written as the mask (#113)."""
+    parts = []
+    it = block.begin()
+    while not it.atEnd():
+        fragment = it.fragment()
+        if fragment.isValid():
+            fmt = fragment.charFormat()
+            if (
+                fmt.isImageFormat()
+                and parse_hidden_url(fmt.toImageFormat().name()) is not None
+            ):
+                parts.append(" ".join([MASK_TEXT] * fragment.length()))
+            else:
+                parts.append(fragment.text())
+        it += 1
+    return "".join(parts)

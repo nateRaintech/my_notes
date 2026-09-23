@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import QApplication, QDialog
 
+from core.hidden_text import HiddenTextStore
 from core.images import ImageStore
 from core.repository import Repository
 from core.settings import load_settings
@@ -139,32 +140,36 @@ def _open_vault(vault_path: str | os.PathLike[str]) -> Vault | None:
 def _bind_vault(window: MainWindow, vault: Vault) -> Repository:
     """Bind a fresh repository and image store over ``vault`` and populate the panes.
 
-    Builds a :class:`~core.repository.Repository` and an
-    :class:`~core.images.ImageStore` on the vault's keyed connection, sweeps
-    unreferenced images, attaches debounced auto-save (which also populates the
+    Builds a :class:`~core.repository.Repository`, an
+    :class:`~core.images.ImageStore` and a
+    :class:`~core.hidden_text.HiddenTextStore` on the vault's keyed connection,
+    sweeps unreferenced images and hidden text, attaches debounced auto-save (which also populates the
     notebook tree), binds images, and refreshes the note list. Used at launch and
     again after a re-unlock.
     """
     repository = Repository(vault.connection)
     images = ImageStore(vault.connection)
+    hidden = HiddenTextStore(vault.connection)
     # The sweep must run here, before any tab can open, and nowhere else. At
     # launch there are no tabs; on re-unlock lock_session has already flushed and
     # closed them all. So every reference to an image is on disk and no undo
     # stack can bring back text naming a swept one. Mid-session, a sweep could
     # delete a just-pasted image whose note hasn't auto-saved yet.
-    _sweep_orphan_images(images)
+    _sweep_orphans(images, hidden)
     window.bind_autosave(repository)
     window.bind_images(images)
+    window.bind_hidden_text(hidden)
     window.refresh_notes()
     return repository
 
 
-def _sweep_orphan_images(images: ImageStore) -> None:
-    """Reclaim images no note mentions; a failure is logged, never raised."""
-    try:
-        images.sweep_orphans()
-    except Exception:  # an unlock must never fail over housekeeping
-        _log.exception("image sweep failed; unreferenced images kept")
+def _sweep_orphans(images: ImageStore, hidden: HiddenTextStore) -> None:
+    """Reclaim images and hidden text no note mentions; failures are logged, never raised."""
+    for name, store in (("image", images), ("hidden text", hidden)):
+        try:
+            store.sweep_orphans()
+        except Exception:  # an unlock must never fail over housekeeping
+            _log.exception("%s sweep failed; unreferenced rows kept", name)
 
 
 def _arm_idle_lock(

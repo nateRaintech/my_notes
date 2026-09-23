@@ -8,6 +8,8 @@ vault-backed document the preview uses, so an export looks like the preview.
   at the note's display width. :func:`note_html` takes the image source as a
   parameter, so the Outlook export (#110) can use ``cid:`` references to
   embedded attachments instead.
+* **Hidden text** (#113) exports as its masked pill in both formats; the
+  value itself never reaches an export.
 * **PDF** is US Letter with 0.75" margins and Qt's page-number footer, and has
   the note's title in its metadata. It is written at 96 dpi, so widths match
   the preview, with images rendered at 2x so they print sharply. The text is
@@ -29,7 +31,10 @@ from typing import TYPE_CHECKING, Callable
 from PySide6.QtCore import QFile, QIODevice, QMarginsF
 from PySide6.QtGui import QPageLayout, QPageSize, QPdfWriter
 
+from core import hidden_text
 from core.image_refs import parse_url
+from ui.hidden_text import MASK_SIZE, mask_image
+from ui.image_ingest import png_bytes
 from ui.note_render import render_document
 
 if TYPE_CHECKING:
@@ -70,7 +75,10 @@ def _rewrite_img(
     src = _SRC_ATTR.search(tag)
     if src is None:
         return tag
-    parsed = parse_url(html.unescape(src.group(1)))
+    url = html.unescape(src.group(1))
+    if hidden_text.parse_url(url) is not None:
+        return _masked_img(tag, src)
+    parsed = parse_url(url)
     if parsed is None:
         return tag  # not a vault image; leave it alone
     image_id, width = parsed
@@ -90,6 +98,13 @@ def _rewrite_img(
     if width is not None:
         tag = tag.replace("<img", f'<img width="{width}"', 1)
     return tag
+
+
+def _masked_img(tag: str, src: re.Match[str]) -> str:
+    """A hidden-text pill as an embedded PNG: the mask, never the value (#113)."""
+    payload = base64.b64encode(png_bytes(mask_image(PDF_IMAGE_RATIO))).decode("ascii")
+    tag = tag[: src.start(1)] + f"data:image/png;base64,{payload}" + tag[src.end(1) :]
+    return tag.replace("<img", f'<img width="{MASK_SIZE.width()}"', 1)
 
 
 def write_html(
